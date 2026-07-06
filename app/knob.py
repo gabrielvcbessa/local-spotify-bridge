@@ -135,7 +135,7 @@ def knob_art_payload(
         "variant": options.variant,
         "url": (
             f"{base_url.rstrip('/')}/v1/knob/art/current.rgb565"
-            f"?size={options.size}&swap={options.swap}&variant={options.variant}"
+            f"?size={options.size}&format=rotary-lvgl&variant={options.variant}"
         ),
         "width": options.size,
         "height": options.size,

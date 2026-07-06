@@ -6,7 +6,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, 
 from fastapi.responses import JSONResponse, Response
 from PIL import Image
 
-from .art import ArtCache, ArtOptions, art_version, bytes_hash, display_ready_rgb565, image_to_rgb565
+from .art import ArtCache, ArtOptions, art_version, bytes_hash, color_bar_test_pattern_rgb565, display_ready_rgb565, image_to_rgb565
 from .broker import ConnectionBroker, StatePoller
 from .config import get_settings
 from .context_cache import PlaylistNameCache, playback_context_parts, schedule_playlist_resolve
@@ -193,13 +193,14 @@ async def get_knob_snapshot(
     request: Request,
     refresh: bool = False,
     art_size: int = Query(default=180, ge=32, le=640),
-    art_format: str = Query(default="rgb565", pattern="^rgb565$"),
+    art_format: str = Query(default="rotary-lvgl", pattern="^(rotary-lvgl|rgb565)$"),
     swap: str = Query(default="lvgl", pattern="^(lvgl|none)$"),
     art_variant: str = Query(default="player-bg", pattern="^player-bg$"),
     client: Annotated[SpotifyClient, Depends(spotify_client)] = spotify,
     state_broker: Annotated[ConnectionBroker, Depends(bridge_broker)] = broker,
 ) -> dict[str, Any]:
-    _ = art_format
+    if art_format == "rotary-lvgl":
+        swap = "lvgl"
     if refresh:
         try:
             await state_broker.publish_if_changed(await client.current_playback())
@@ -490,6 +491,7 @@ async def current_art_rgb565(
 @app.get("/v1/knob/art/current.rgb565")
 async def knob_current_art_rgb565(
     size: int = Query(default=180, ge=32, le=640),
+    format: str = Query(default="rotary-lvgl", pattern="^rotary-lvgl$"),
     swap: str = Query(default="lvgl", pattern="^(lvgl|none)$"),
     variant: str = Query(default="player-bg", pattern="^player-bg$"),
     theme: str = Query(default="dark", pattern="^(dark|none)$"),
@@ -500,6 +502,8 @@ async def knob_current_art_rgb565(
     circle: bool = False,
     client: Annotated[SpotifyClient, Depends(spotify_client)] = spotify,
 ):
+    _ = format
+    swap = "lvgl"
     if not broker.current_state or not broker.current_state.album_art_url:
         raise HTTPException(status_code=404, detail="No current album art available.")
     image_id = broker.current_state.album_art_id or broker.current_state.knob_art_version
@@ -518,6 +522,17 @@ async def knob_current_art_rgb565(
     )
     payload = await cached_rgb565_art(client, image_id, broker.current_state.album_art_url, options)
     return rgb565_response(payload, options, image_id)
+
+
+@app.get("/v1/knob/art/test-pattern.rgb565")
+async def knob_test_pattern_rgb565(
+    size: int = Query(default=180, ge=32, le=640),
+    format: str = Query(default="rotary-lvgl", pattern="^rotary-lvgl$"),
+):
+    _ = format
+    options = ArtOptions(size=size, swap="lvgl", variant="test-pattern", theme="none", darken=0.0, saturation=1.0, contrast=1.0)
+    payload = color_bar_test_pattern_rgb565(size, swap="lvgl")
+    return rgb565_response(payload, options, "test-pattern")
 
 
 @app.get("/v1/art/proxy.jpg")
@@ -604,7 +619,7 @@ def mqtt_knob_config() -> dict[str, Any]:
             "snapshot_url": f"{mqtt_base_url()}/v1/knob/snapshot",
             "art_url": (
                 f"{mqtt_base_url()}/v1/knob/art/current.rgb565"
-                f"?size={art_options.size}&swap={art_options.swap}&variant={art_options.variant}"
+                f"?size={art_options.size}&format=rotary-lvgl&variant={art_options.variant}"
             ),
         },
         "art": {
@@ -756,7 +771,7 @@ async def resolved_context_name(
 def state_payload(state, request: Request) -> dict[str, Any]:
     payload = state.model_dump(mode="json")
     if state.album_art_id:
-        payload["knob_art_url"] = f"{public_base_url(request)}/v1/art/current.rgb565?size=180&swap=lvgl"
+        payload["knob_art_url"] = f"{public_base_url(request)}/v1/knob/art/current.rgb565?size=180&format=rotary-lvgl&variant=player-bg"
         payload["knob_art_version"] = state.album_art_id
     return payload
 
@@ -794,6 +809,7 @@ def rgb565_response(payload: bytes, options: ArtOptions, image_id: str) -> Respo
             "X-Image-Height": str(options.size),
             "X-Image-Format": "rgb565",
             "X-Image-Byte-Order": options.byte_order,
+            "X-Image-Target": "rotary-os-lvgl-image-source" if options.byte_order == "rotary-lvgl" else "generic-rgb565",
             "X-Image-Variant": options.variant,
             "X-Image-Version": art_version(image_id, options),
             "X-Image-Hash": bytes_hash(payload),

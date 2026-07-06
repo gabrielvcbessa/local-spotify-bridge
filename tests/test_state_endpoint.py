@@ -21,7 +21,7 @@ def test_state_adds_stable_knob_art_url_and_version():
 
     assert response.status_code == 200
     state = response.json()["state"]
-    assert state["knob_art_url"] == "http://bridge.local:8090/v1/art/current.rgb565?size=180&swap=lvgl"
+    assert state["knob_art_url"] == "http://bridge.local:8090/v1/knob/art/current.rgb565?size=180&format=rotary-lvgl&variant=player-bg"
     assert state["knob_art_version"] == "ab67616d0000b273adfc1ac5836f96adac580271"
 
 
@@ -56,7 +56,7 @@ def test_knob_snapshot_shapes_render_contract_and_hashes(monkeypatch):
     )
     try:
         response = TestClient(app).get(
-            "/v1/knob/snapshot?art_size=180&art_format=rgb565&swap=lvgl&art_variant=player-bg",
+            "/v1/knob/snapshot?art_size=180&art_format=rotary-lvgl&art_variant=player-bg",
             headers={"host": "bridge.local:8090"},
         )
     finally:
@@ -88,14 +88,26 @@ def test_knob_snapshot_shapes_render_contract_and_hashes(monkeypatch):
         ),
         "hash": bytes_hash(art_payload),
         "variant": "player-bg",
-        "url": "http://bridge.local:8090/v1/knob/art/current.rgb565?size=180&swap=lvgl&variant=player-bg",
+        "url": "http://bridge.local:8090/v1/knob/art/current.rgb565?size=180&format=rotary-lvgl&variant=player-bg",
         "width": 180,
         "height": 180,
         "format": "rgb565",
-        "byte_order": "lvgl-swap",
+        "byte_order": "rotary-lvgl",
         "content_length": 64800,
     }
     assert payload["server"]["ok"] is True
+
+
+def test_knob_test_pattern_endpoint_sets_rotary_lvgl_contract_headers():
+    response = TestClient(app).get("/v1/knob/art/test-pattern.rgb565?size=180&format=rotary-lvgl")
+
+    assert response.status_code == 200
+    assert response.headers["X-Image-Format"] == "rgb565"
+    assert response.headers["X-Image-Byte-Order"] == "rotary-lvgl"
+    assert response.headers["X-Image-Target"] == "rotary-os-lvgl-image-source"
+    assert response.headers["Content-Length"] == str(180 * 180 * 2)
+    assert response.content[0:2] == bytes.fromhex("00f8")
+    assert response.content[36 * 2:36 * 2 + 2] == bytes.fromhex("e007")
 
 
 def test_knob_snapshot_uses_resolved_playlist_display_name():

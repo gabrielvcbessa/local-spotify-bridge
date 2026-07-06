@@ -23,7 +23,7 @@ class ArtOptions:
 
     @property
     def byte_order(self) -> str:
-        return "lvgl-swap" if self.swap == "lvgl" else "big-endian"
+        return "rotary-lvgl" if self.swap == "lvgl" else "big-endian"
 
     def cache_key(self) -> dict[str, object]:
         return {
@@ -149,3 +149,20 @@ def image_to_rgb565(image: Image.Image, *, swap: str = "none") -> bytes:
             pixels.append(high)
             pixels.append(low)
     return bytes(pixels)
+
+
+def color_bar_test_pattern_rgb565(size: int, *, swap: str = "lvgl") -> bytes:
+    colors = (
+        (255, 0, 0),
+        (0, 255, 0),
+        (0, 0, 255),
+        (255, 255, 255),
+        (0, 0, 0),
+    )
+    image = Image.new("RGB", (size, size))
+    pixels = []
+    for _y in range(size):
+        for x in range(size):
+            pixels.append(colors[min(len(colors) - 1, (x * len(colors)) // size)])
+    image.putdata(pixels)
+    return image_to_rgb565(image, swap=swap)

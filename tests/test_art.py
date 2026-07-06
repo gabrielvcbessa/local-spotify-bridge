@@ -2,7 +2,7 @@ from io import BytesIO
 
 from PIL import Image
 
-from app.art import ArtOptions, art_version, bytes_hash, display_ready_rgb565, image_to_rgb565
+from app.art import ArtOptions, art_version, bytes_hash, color_bar_test_pattern_rgb565, display_ready_rgb565, image_to_rgb565
 from app.main import rgb565_response
 
 
@@ -41,8 +41,20 @@ def test_rgb565_response_sets_knob_contract_headers():
     assert response.headers["X-Image-Width"] == "2"
     assert response.headers["X-Image-Height"] == "2"
     assert response.headers["X-Image-Format"] == "rgb565"
-    assert response.headers["X-Image-Byte-Order"] == "lvgl-swap"
+    assert response.headers["X-Image-Byte-Order"] == "rotary-lvgl"
+    assert response.headers["X-Image-Target"] == "rotary-os-lvgl-image-source"
     assert response.headers["X-Image-Variant"] == "player-bg"
     assert response.headers["X-Image-Version"] == art_version("image-id", ArtOptions(size=2, swap="lvgl"))
     assert response.headers["X-Image-Hash"] == bytes_hash(b"1234")
     assert response.headers["Cache-Control"] == "public, max-age=86400"
+
+
+def test_test_pattern_rgb565_uses_obvious_color_bars():
+    payload = color_bar_test_pattern_rgb565(180)
+
+    assert len(payload) == 180 * 180 * 2
+    assert payload[0:2] == bytes.fromhex("00f8")
+    assert payload[36 * 2:36 * 2 + 2] == bytes.fromhex("e007")
+    assert payload[72 * 2:72 * 2 + 2] == bytes.fromhex("1f00")
+    assert payload[108 * 2:108 * 2 + 2] == bytes.fromhex("ffff")
+    assert payload[144 * 2:144 * 2 + 2] == bytes.fromhex("0000")
