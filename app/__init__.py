@@ -1,0 +1,2 @@
+"""Local Spotify bridge service."""
+
