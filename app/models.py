@@ -27,6 +27,7 @@ class PlaybackSnapshot(BaseModel):
     shuffle_state: bool | None = None
     repeat_state: str | None = None
     next_track: dict[str, Any] | None = None
+    previous_track: dict[str, Any] | None = None
     raw: dict[str, Any] = Field(default_factory=dict)
 
 

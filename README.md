@@ -326,6 +326,29 @@ It returns one compact render payload with deterministic hashes:
       "content_length": 259200
     }
   },
+  "previous_track": {
+    "id": "previous-spotify-track-id",
+    "uri": "spotify:track:...",
+    "title": "Previous song name",
+    "artists": ["Artist 0"],
+    "artist_text": "Artist 0",
+    "album": "Previous album name",
+    "duration_ms": 179000,
+    "album_art_id": "previous-spotify-image-id",
+    "album_art_url": "https://i.scdn.co/image/...",
+    "context_uri": "spotify:playlist:...",
+    "album_uri": "spotify:album:...",
+    "art": {
+      "id": "previous-spotify-image-id",
+      "version": "sha256-of-source-art-and-processing-options",
+      "url": "http://bridge.local:8090/v1/art/previous-spotify-image-id.rgb565?size=360&swap=lvgl&variant=player-bg",
+      "width": 360,
+      "height": 360,
+      "format": "rgb565",
+      "byte_order": "rotary-lvgl",
+      "content_length": 259200
+    }
+  },
   "context": {
     "type": "playlist",
     "uri": "spotify:playlist:...",
@@ -373,8 +396,8 @@ It returns one compact render payload with deterministic hashes:
 Firmware behavior:
 
 - `payload_hash` changes when anything render-relevant changes.
-- `playback_hash` changes when track text, optional `next_track`, context id/name/display name, play
-  state, device, volume, shuffle, or repeat changes.
+- `playback_hash` changes when track text, optional `next_track` or `previous_track`, context
+  id/name/display name, play state, device, volume, shuffle, or repeat changes.
 - `art.version` changes when the source art id or processing recipe changes.
 - `art.hash` and top-level `art_hash` are the SHA-256 of the final processed RGB565 bytes.
 - If both `art.version` and `art.hash` are unchanged, do not fetch `art.url` again.
@@ -382,6 +405,10 @@ Firmware behavior:
 - If `device.volume_control_supported` is `false`, do not send volume commands.
 - `next_track` is optional advisory preload data from Spotify's queue endpoint. It may be `null` and
   should not be treated as a promise that the next command will play that exact track.
+- `previous_track` is optional advisory history for knob-side image caching. It is only kept after a
+  forward transition caused by `next` or a song reaching the end, and only when the bridge can confirm
+  the previous/current tracks are in the same playlist or album and the current track matches the
+  previous snapshot's `next_track`. Otherwise it is `null`.
 - Use `context.display_name` for UI text. The server resolves playlist names when possible and falls
   back to album name for non-playlist or unresolved contexts.
 

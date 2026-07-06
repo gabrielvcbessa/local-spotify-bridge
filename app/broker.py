@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -36,6 +37,8 @@ def states_are_meaningfully_different(
         "volume_control_supported",
         "shuffle_state",
         "repeat_state",
+        "next_track",
+        "previous_track",
     )
     for field in comparable_fields:
         if getattr(previous, field) != getattr(current, field):
@@ -64,6 +67,7 @@ class ConnectionBroker:
         self.last_mqtt_availability: dict[str, Any] | None = None
         self.last_mqtt_availability_at: str | None = None
         self._mqtt_payload_fingerprints: dict[str, str] = {}
+        self._forward_transition_expected_until = 0.0
         self._lock = asyncio.Lock()
 
     def set_mqtt_snapshot_factory(
@@ -129,6 +133,12 @@ class ConnectionBroker:
 
     async def publish_if_changed(self, new_state: PlaybackSnapshot | None) -> bool:
         self.mark_spotify_success()
+        track_changed = playback_track_changed(self.current_state, new_state)
+        new_state = enrich_with_previous_track(
+            self.current_state,
+            new_state,
+            forward_transition_expected=self.forward_transition_expected,
+        )
         changed = states_are_meaningfully_different(
             self.current_state,
             new_state,
@@ -137,9 +147,26 @@ class ConnectionBroker:
         if not changed:
             return False
 
+        if track_changed:
+            self.clear_forward_transition_expected()
         self.current_state = new_state
         self._version += 1
         await self.publish("playback.changed", new_state)
+        return True
+
+    def mark_forward_transition_expected(self, ttl_seconds: float = 12.0) -> None:
+        self._forward_transition_expected_until = time.monotonic() + ttl_seconds
+
+    def clear_forward_transition_expected(self) -> None:
+        self._forward_transition_expected_until = 0.0
+
+    @property
+    def forward_transition_expected(self) -> bool:
+        if self._forward_transition_expected_until <= 0:
+            return False
+        if time.monotonic() > self._forward_transition_expected_until:
+            self.clear_forward_transition_expected()
+            return False
         return True
 
     async def publish_metadata_changed(self) -> None:
@@ -319,6 +346,138 @@ def strip_mqtt_volatile_fields(value: Any) -> Any:
     if isinstance(value, list):
         return [strip_mqtt_volatile_fields(item) for item in value]
     return value
+
+
+def enrich_with_previous_track(
+    previous: PlaybackSnapshot | None,
+    current: PlaybackSnapshot | None,
+    *,
+    forward_transition_expected: bool = False,
+    track_end_threshold_ms: int = 8_000,
+) -> PlaybackSnapshot | None:
+    if current is None or previous is None:
+        return current
+
+    previous_track = current.previous_track
+    if playback_track_changed(previous, current):
+        if (
+            same_playback_scope(previous, current)
+            and current_matches_previous_next_track(previous, current)
+            and (forward_transition_expected or playback_ended(previous, threshold_ms=track_end_threshold_ms))
+        ):
+            previous_track = track_preview_from_snapshot(previous)
+        else:
+            previous_track = None
+    elif previous.previous_track is not None:
+        previous_track = previous.previous_track if cached_track_matches_scope(previous.previous_track, current) else None
+
+    if previous_track == current.previous_track:
+        return current
+    return current.model_copy(update={"previous_track": previous_track})
+
+
+def playback_track_changed(previous: PlaybackSnapshot | None, current: PlaybackSnapshot | None) -> bool:
+    if previous is None or current is None:
+        return False
+    previous_identity = previous.item_id or previous.item_uri
+    current_identity = current.item_id or current.item_uri
+    return bool(previous_identity and current_identity and previous_identity != current_identity)
+
+
+def track_preview_from_snapshot(state: PlaybackSnapshot) -> dict[str, Any] | None:
+    if not state.item_id and not state.item_uri and not state.title:
+        return None
+    context = playback_context(state)
+    return {
+        "id": state.item_id,
+        "uri": state.item_uri,
+        "title": state.title,
+        "artists": state.artists,
+        "artist_text": ", ".join(state.artists),
+        "album": state.album,
+        "album_art_url": state.album_art_url,
+        "album_art_id": state.album_art_id,
+        "duration_ms": state.duration_ms,
+        "context_type": context["type"],
+        "context_uri": context["uri"],
+        "album_uri": playback_album_uri(state),
+    }
+
+
+def playback_ended(state: PlaybackSnapshot, *, threshold_ms: int) -> bool:
+    if state.progress_ms is None or state.duration_ms is None:
+        return False
+    return max(state.duration_ms - state.progress_ms, 0) <= threshold_ms
+
+
+def same_playback_scope(previous: PlaybackSnapshot, current: PlaybackSnapshot) -> bool:
+    previous_context_uri = playback_context(previous)["uri"]
+    current_context_uri = playback_context(current)["uri"]
+    if previous_context_uri or current_context_uri:
+        return bool(previous_context_uri and current_context_uri and previous_context_uri == current_context_uri)
+
+    previous_album_uri = playback_album_uri(previous)
+    current_album_uri = playback_album_uri(current)
+    if previous_album_uri or current_album_uri:
+        return bool(previous_album_uri and current_album_uri and previous_album_uri == current_album_uri)
+
+    if previous.album_art_id or current.album_art_id:
+        return bool(previous.album_art_id and current.album_art_id and previous.album_art_id == current.album_art_id)
+
+    return bool(previous.album and current.album and previous.album == current.album and previous.artists == current.artists)
+
+
+def current_matches_previous_next_track(previous: PlaybackSnapshot, current: PlaybackSnapshot) -> bool:
+    if previous.next_track is None:
+        return False
+    next_id = previous.next_track.get("id")
+    next_uri = previous.next_track.get("uri")
+    if next_id and current.item_id:
+        return next_id == current.item_id
+    if next_uri and current.item_uri:
+        return next_uri == current.item_uri
+    return False
+
+
+def cached_track_matches_scope(cached_track: dict[str, Any], current: PlaybackSnapshot) -> bool:
+    cached_context_uri = cached_track.get("context_uri")
+    current_context_uri = playback_context(current)["uri"]
+    if cached_context_uri or current_context_uri:
+        return bool(cached_context_uri and current_context_uri and cached_context_uri == current_context_uri)
+
+    cached_album_uri = cached_track.get("album_uri")
+    current_album_uri = playback_album_uri(current)
+    if cached_album_uri or current_album_uri:
+        return bool(cached_album_uri and current_album_uri and cached_album_uri == current_album_uri)
+
+    cached_album_art_id = cached_track.get("album_art_id")
+    if cached_album_art_id or current.album_art_id:
+        return bool(cached_album_art_id and current.album_art_id and cached_album_art_id == current.album_art_id)
+
+    return bool(cached_track.get("album") and current.album and cached_track.get("album") == current.album)
+
+
+def playback_context(state: PlaybackSnapshot) -> dict[str, str | None]:
+    raw_context = state.raw.get("context") if isinstance(state.raw, dict) else None
+    if not isinstance(raw_context, dict):
+        return {"type": None, "uri": None}
+    context_type = raw_context.get("type")
+    context_uri = raw_context.get("uri")
+    return {
+        "type": context_type if isinstance(context_type, str) else None,
+        "uri": context_uri if isinstance(context_uri, str) else None,
+    }
+
+
+def playback_album_uri(state: PlaybackSnapshot) -> str | None:
+    item = state.raw.get("item") if isinstance(state.raw, dict) else None
+    if not isinstance(item, dict):
+        return None
+    album = item.get("album")
+    if not isinstance(album, dict):
+        return None
+    uri = album.get("uri")
+    return uri if isinstance(uri, str) else None
 
 
 class StatePoller:

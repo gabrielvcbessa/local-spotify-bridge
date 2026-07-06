@@ -48,6 +48,7 @@ def knob_snapshot(
             "duration_ms": None,
             "track": None,
             "next_track": None,
+            "previous_track": None,
             "context": None,
             "device": None,
             "modes": {"shuffle": None, "repeat": None},
@@ -84,7 +85,8 @@ def knob_snapshot(
     }
     modes = {"shuffle": state.shuffle_state, "repeat": state.repeat_state}
     art = knob_art_payload(state, base_url, art_options)
-    next_track = knob_next_track_payload(state, base_url, art_options)
+    next_track = knob_cached_track_payload(state.next_track, base_url, art_options)
+    previous_track = knob_cached_track_payload(state.previous_track, base_url, art_options)
 
     playback_hash = stable_hash(
         {
@@ -93,6 +95,7 @@ def knob_snapshot(
             "duration_ms": state.duration_ms,
             "track": track,
             "next_track": next_track,
+            "previous_track": previous_track,
             "context": context,
             "device": device,
             "modes": modes,
@@ -113,6 +116,7 @@ def knob_snapshot(
         "duration_ms": state.duration_ms,
         "track": track,
         "next_track": next_track,
+        "previous_track": previous_track,
         "context": context,
         "device": device,
         "modes": modes,
@@ -125,18 +129,18 @@ def knob_snapshot(
     }
 
 
-def knob_next_track_payload(
-    state: PlaybackSnapshot,
+def knob_cached_track_payload(
+    track: dict[str, Any] | None,
     base_url: str,
     options: ArtOptions,
 ) -> dict[str, Any] | None:
-    if state.next_track is None:
+    if track is None:
         return None
 
-    next_track = dict(state.next_track)
-    album_art_id = next_track.get("album_art_id")
+    cached_track = dict(track)
+    album_art_id = cached_track.get("album_art_id")
     if isinstance(album_art_id, str) and album_art_id:
-        next_track["art"] = {
+        cached_track["art"] = {
             "id": album_art_id,
             "version": art_version(album_art_id, options),
             "url": (
@@ -150,8 +154,8 @@ def knob_next_track_payload(
             "content_length": options.size * options.size * 2,
         }
     else:
-        next_track["art"] = None
-    return next_track
+        cached_track["art"] = None
+    return cached_track
 
 
 def knob_art_payload(

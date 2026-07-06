@@ -13,7 +13,7 @@ from .config import get_settings
 from .context_cache import PlaylistNameCache, playback_context_parts, schedule_playlist_resolve
 from .knob import knob_snapshot
 from .knob_mqtt import devices_payload, envelope, library_page_payload, library_root_payload, status_payload
-from .models import PlaybackCommand, SeekCommand, TargetDeviceCommand, TransferPlaybackCommand, VolumeCommand
+from .models import PlaybackCommand, PlaybackSnapshot, SeekCommand, TargetDeviceCommand, TransferPlaybackCommand, VolumeCommand
 from .spotify import (
     SpotifyAuthNotConfigured,
     SpotifyClient,
@@ -236,6 +236,7 @@ async def get_knob_snapshot(
             except Exception as exc:
                 raise translate_spotify_error(exc) from exc
 
+    await prewarm_cached_track_art(client, state_broker.current_state, art_options)
     return knob_snapshot(
         version=state_broker.version,
         state=state_broker.current_state,
@@ -319,6 +320,7 @@ async def next_track(
 ):
     try:
         await client.next_track(device_id=await command_device_id(client, device_id))
+        broker.mark_forward_transition_expected()
         await refresh_and_publish(client, follow_up_delays=settings.command_followup_refresh_delays)
     except Exception as exc:
         raise translate_spotify_error(exc) from exc
@@ -686,6 +688,7 @@ async def mqtt_knob_snapshot(version: int, state) -> dict[str, Any]:
             except Exception as exc:
                 broker.mark_spotify_error(exc)
 
+    await prewarm_cached_track_art(spotify, state, art_options)
     await publish_mqtt_status()
     return knob_snapshot(
         version=version,
@@ -918,6 +921,27 @@ async def build_devices_page_payload(
     return envelope(version=broker.version, payload=payload, hash_payload={k: v for k, v in payload.items() if k != "request_id"})
 
 
+async def prewarm_cached_track_art(client: SpotifyClient, state: PlaybackSnapshot | None, art_options: ArtOptions) -> None:
+    if state is None:
+        return
+    for cached_track in (state.next_track, state.previous_track):
+        if isinstance(cached_track, dict):
+            await prewarm_track_art(client, cached_track, art_options)
+
+
+async def prewarm_track_art(client: SpotifyClient, track: dict[str, Any], art_options: ArtOptions) -> None:
+    image_id = track.get("album_art_id")
+    image_url = track.get("album_art_url")
+    if not isinstance(image_id, str) or not image_id:
+        return
+    if not isinstance(image_url, str) or not image_url:
+        return
+    try:
+        await cached_rgb565_art(client, image_id, image_url, art_options)
+    except Exception as exc:
+        broker.mark_spotify_error(exc)
+
+
 async def handle_mqtt_request(command: dict[str, Any]) -> dict[str, Any]:
     request_type = command.get("type")
     request_id = command.get("request_id") if isinstance(command.get("request_id"), str) else None
@@ -981,6 +1005,7 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
         await spotify.pause(device_id=await command_device_id(spotify, command.get("device_id")))
     elif command_type == "next":
         await spotify.next_track(device_id=await command_device_id(spotify, command.get("device_id")))
+        broker.mark_forward_transition_expected()
         follow_up_refresh = True
     elif command_type == "previous":
         await spotify.previous_track(device_id=await command_device_id(spotify, command.get("device_id")))

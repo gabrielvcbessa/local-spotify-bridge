@@ -64,8 +64,10 @@ def test_mqtt_knob_config_defaults_to_stopwatch_art_size():
 def test_knob_snapshot_shapes_render_contract_and_hashes(monkeypatch):
     previous = broker.current_state
     art_payload = b"\x00" * 64800
+    cached_art_calls = []
 
-    async def fake_cached_rgb565_art(*args, **kwargs):
+    async def fake_cached_rgb565_art(_client, image_id, _url, options):
+        cached_art_calls.append((image_id, options.size))
         return art_payload
 
     monkeypatch.setattr(main, "cached_rgb565_art", fake_cached_rgb565_art)
@@ -99,6 +101,19 @@ def test_knob_snapshot_shapes_render_contract_and_hashes(monkeypatch):
             "album_art_id": "ab67616d0000b273next",
             "duration_ms": 181000,
         },
+        previous_track={
+            "id": "previous-track-id",
+            "uri": "spotify:track:previous-track-id",
+            "title": "Previous song",
+            "artists": ["Artist 0"],
+            "artist_text": "Artist 0",
+            "album": "Previous album",
+            "album_art_url": "https://i.scdn.co/image/ab67616d0000b273previous",
+            "album_art_id": "ab67616d0000b273previous",
+            "duration_ms": 179000,
+            "context_uri": "spotify:playlist:playlist-id",
+            "album_uri": "spotify:album:previous-album-id",
+        },
         raw={"context": {"type": "playlist", "uri": "spotify:playlist:playlist-id"}},
     )
     try:
@@ -114,6 +129,11 @@ def test_knob_snapshot_shapes_render_contract_and_hashes(monkeypatch):
     assert len(payload["payload_hash"]) == 64
     assert len(payload["playback_hash"]) == 64
     assert payload["art_hash"] == bytes_hash(art_payload)
+    assert cached_art_calls == [
+        ("ab67616d0000b273adfc1ac5836f96adac580271", 180),
+        ("ab67616d0000b273next", 180),
+        ("ab67616d0000b273previous", 180),
+    ]
     assert payload["is_playing"] is True
     assert payload["track"]["artist_text"] == "Artist 1, Artist 2"
     assert payload["next_track"]["title"] == "Next song"
@@ -124,6 +144,20 @@ def test_knob_snapshot_shapes_render_contract_and_hashes(monkeypatch):
             ArtOptions(size=180, swap="lvgl", variant="player-bg"),
         ),
         "url": "http://bridge.local:8090/v1/art/ab67616d0000b273next.rgb565?size=180&swap=lvgl&variant=player-bg",
+        "width": 180,
+        "height": 180,
+        "format": "rgb565",
+        "byte_order": "rotary-lvgl",
+        "content_length": 64800,
+    }
+    assert payload["previous_track"]["title"] == "Previous song"
+    assert payload["previous_track"]["art"] == {
+        "id": "ab67616d0000b273previous",
+        "version": art_version(
+            "ab67616d0000b273previous",
+            ArtOptions(size=180, swap="lvgl", variant="player-bg"),
+        ),
+        "url": "http://bridge.local:8090/v1/art/ab67616d0000b273previous.rgb565?size=180&swap=lvgl&variant=player-bg",
         "width": 180,
         "height": 180,
         "format": "rgb565",
