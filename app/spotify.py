@@ -284,11 +284,17 @@ class SpotifyClient:
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code not in {403, 404}:
                 raise
-            return await self.playlist_name_from_user_library(playlist_id)
+            return await self.playlist_name_from_fallbacks(playlist_id)
         name = payload.get("name") if isinstance(payload, dict) else None
         if isinstance(name, str) and name:
             return name
-        return await self.playlist_name_from_user_library(playlist_id)
+        return await self.playlist_name_from_fallbacks(playlist_id)
+
+    async def playlist_name_from_fallbacks(self, playlist_id: str) -> str | None:
+        name = await self.playlist_name_from_user_library(playlist_id)
+        if name:
+            return name
+        return await self.playlist_name_from_oembed(playlist_id)
 
     async def playlist_name_from_user_library(self, playlist_id: str, max_pages: int = 20) -> str | None:
         offset = 0
@@ -306,6 +312,20 @@ class SpotifyClient:
                 return None
             offset += limit
         return None
+
+    async def playlist_name_from_oembed(self, playlist_id: str) -> str | None:
+        try:
+            response = await self._http.get(
+                "https://open.spotify.com/oembed",
+                params={"url": f"https://open.spotify.com/playlist/{playlist_id}"},
+            )
+            response.raise_for_status()
+        except httpx.HTTPError:
+            return None
+
+        payload = response.json()
+        title = payload.get("title") if isinstance(payload, dict) else None
+        return title if isinstance(title, str) and title else None
 
     async def saved_tracks(self, limit: int = 50, offset: int = 0) -> Any:
         return await self.request("GET", "/me/tracks", params={"limit": limit, "offset": offset})
