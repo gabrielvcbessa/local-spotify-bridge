@@ -25,6 +25,24 @@ class Settings(BaseSettings):
     host: str = Field(default="0.0.0.0", alias="HOST")
     port: int = Field(default=8090, alias="PORT")
     poll_interval_seconds: float = Field(default=3.0, alias="POLL_INTERVAL_SECONDS")
+    spotify_rate_limit_window_seconds: float = Field(default=30.0, alias="SPOTIFY_RATE_LIMIT_WINDOW_SECONDS")
+    spotify_rate_limit_soft_requests_per_window: int = Field(
+        default=20,
+        alias="SPOTIFY_RATE_LIMIT_SOFT_REQUESTS_PER_WINDOW",
+    )
+    spotify_rate_limit_soft_ratio: float = Field(default=0.8, alias="SPOTIFY_RATE_LIMIT_SOFT_RATIO")
+    spotify_rate_limit_backoff_multiplier: float = Field(
+        default=1.25,
+        alias="SPOTIFY_RATE_LIMIT_BACKOFF_MULTIPLIER",
+    )
+    spotify_rate_limit_max_poll_interval_seconds: float = Field(
+        default=60.0,
+        alias="SPOTIFY_RATE_LIMIT_MAX_POLL_INTERVAL_SECONDS",
+    )
+    spotify_rate_limit_retry_after_padding_seconds: float = Field(
+        default=0.5,
+        alias="SPOTIFY_RATE_LIMIT_RETRY_AFTER_PADDING_SECONDS",
+    )
     state_change_progress_drift_ms: int = Field(default=5000, alias="STATE_CHANGE_PROGRESS_DRIFT_MS")
 
     mqtt_enabled: bool = Field(default=False, alias="MQTT_ENABLED")

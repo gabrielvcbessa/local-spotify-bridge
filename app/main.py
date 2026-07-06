@@ -27,7 +27,12 @@ settings = get_settings()
 store = RuntimeStore(settings)
 spotify = SpotifyClient(settings, store)
 broker = ConnectionBroker(settings)
-poller = StatePoller(spotify.current_playback, broker, settings.poll_interval_seconds)
+poller = StatePoller(
+    spotify.current_playback,
+    broker,
+    settings.poll_interval_seconds,
+    interval_strategy=spotify.next_poll_interval,
+)
 art_cache = ArtCache(settings)
 playlist_name_cache = PlaylistNameCache()
 
@@ -106,6 +111,7 @@ async def health() -> dict[str, Any]:
         "target_device_name": target.device_name if target else None,
         "target_device_id": target.device_id if target else None,
         "playlist_name_cache": playlist_name_cache.status(),
+        "rate_limit": spotify.rate_limit_status(settings.poll_interval_seconds),
         "mqtt_topics": broker.mqtt_topics() if settings.mqtt_enabled else None,
         "mqtt_availability": broker.last_mqtt_availability if settings.mqtt_enabled else None,
         "mqtt_availability_at": broker.last_mqtt_availability_at if settings.mqtt_enabled else None,

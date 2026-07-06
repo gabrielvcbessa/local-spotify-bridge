@@ -298,10 +298,12 @@ class StatePoller:
         fetch_state: Callable[[], Awaitable[PlaybackSnapshot | None]],
         broker: ConnectionBroker,
         interval_seconds: float,
+        interval_strategy: Callable[[float], float] | None = None,
     ) -> None:
         self._fetch_state = fetch_state
         self._broker = broker
         self._interval_seconds = interval_seconds
+        self._interval_strategy = interval_strategy
         self._task: asyncio.Task[None] | None = None
         self._stopped = asyncio.Event()
 
@@ -331,4 +333,9 @@ class StatePoller:
                 self._broker.mark_spotify_error(exc)
                 # Keep the local bridge alive if Spotify is briefly unavailable.
                 pass
-            await asyncio.sleep(self._interval_seconds)
+            await asyncio.sleep(self._next_interval_seconds())
+
+    def _next_interval_seconds(self) -> float:
+        if self._interval_strategy is None:
+            return self._interval_seconds
+        return max(self._interval_seconds, self._interval_strategy(self._interval_seconds))

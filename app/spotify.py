@@ -1,4 +1,5 @@
 import base64
+import asyncio
 import time
 from typing import Any
 from urllib.parse import urlencode
@@ -7,6 +8,7 @@ import httpx
 
 from .config import Settings
 from .models import CompactLibraryItem, CompactPage, PlaybackSnapshot
+from .rate_limit import SpotifyRateLimiter
 from .store import RuntimeStore, TargetDevice
 
 
@@ -30,6 +32,14 @@ class SpotifyClient:
         self._http = http or httpx.AsyncClient(timeout=20)
         self._access_token: str | None = None
         self._token_expires_at = 0.0
+        self._rate_limiter = SpotifyRateLimiter(
+            window_seconds=settings.spotify_rate_limit_window_seconds,
+            soft_requests_per_window=settings.spotify_rate_limit_soft_requests_per_window,
+            soft_ratio=settings.spotify_rate_limit_soft_ratio,
+            backoff_multiplier=settings.spotify_rate_limit_backoff_multiplier,
+            max_poll_interval_seconds=settings.spotify_rate_limit_max_poll_interval_seconds,
+            retry_after_padding_seconds=settings.spotify_rate_limit_retry_after_padding_seconds,
+        )
 
     async def close(self) -> None:
         await self._http.aclose()
@@ -72,6 +82,12 @@ class SpotifyClient:
     @property
     def spotify_configured(self) -> bool:
         return bool(self._settings.spotify_auth_configured and self.refresh_token)
+
+    def next_poll_interval(self, base_interval_seconds: float) -> float:
+        return self._rate_limiter.poll_interval(base_interval_seconds)
+
+    def rate_limit_status(self, base_poll_interval_seconds: float) -> dict[str, object]:
+        return self._rate_limiter.status(base_poll_interval_seconds)
 
     def authorize_url(self, state: str | None = None) -> str:
         if not self._settings.spotify_auth_configured:
@@ -124,12 +140,20 @@ class SpotifyClient:
     ) -> Any:
         expected = expected_statuses or {200}
         token = await self._token()
+        wait_seconds = self._rate_limiter.wait_seconds()
+        if wait_seconds > 0:
+            await asyncio.sleep(wait_seconds)
+        self._rate_limiter.record_request()
         response = await self._http.request(
             method,
             f"https://api.spotify.com/v1{path}",
             headers={"Authorization": f"Bearer {token}"},
             params=params,
             json=json,
+        )
+        self._rate_limiter.record_response(
+            response.status_code,
+            response.headers.get("Retry-After"),
         )
         if response.status_code not in expected:
             response.raise_for_status()

@@ -125,6 +125,31 @@ MQTT_KNOB_DEVICE_ID=kitchen
 MQTT_QOS=1
 ```
 
+## Spotify Rate Limits
+
+The bridge centralizes Spotify Web API traffic and adapts its automatic polling when request volume
+gets close to a configurable soft threshold. `POLL_INTERVAL_SECONDS` is always the minimum polling
+interval; the bridge will never poll Spotify faster than that value. If Spotify returns `429` with a
+`Retry-After` header, future API calls wait for that window and the poller backs off until the retry
+window clears.
+
+Useful tuning settings:
+
+```dotenv
+POLL_INTERVAL_SECONDS=3
+SPOTIFY_RATE_LIMIT_WINDOW_SECONDS=30
+SPOTIFY_RATE_LIMIT_SOFT_REQUESTS_PER_WINDOW=20
+SPOTIFY_RATE_LIMIT_SOFT_RATIO=0.8
+SPOTIFY_RATE_LIMIT_BACKOFF_MULTIPLIER=1.25
+SPOTIFY_RATE_LIMIT_MAX_POLL_INTERVAL_SECONDS=60
+SPOTIFY_RATE_LIMIT_RETRY_AFTER_PADDING_SECONDS=0.5
+```
+
+`/health` includes `rate_limit` diagnostics with the current rolling-window request count, adaptive
+poll interval, and any active `Retry-After` wait. Spotify does not publish one universal numeric
+quota for every app, so treat `SPOTIFY_RATE_LIMIT_SOFT_REQUESTS_PER_WINDOW` as a conservative local
+pressure threshold and tune it if `/health.rate_limit.near_threshold` is frequently true.
+
 ## REST API
 
 ```bash
