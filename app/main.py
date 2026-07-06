@@ -11,6 +11,7 @@ from .broker import ConnectionBroker, StatePoller
 from .config import get_settings
 from .context_cache import PlaylistNameCache, playback_context_parts, schedule_playlist_resolve
 from .knob import knob_snapshot
+from .knob_mqtt import devices_payload, envelope, library_page_payload, library_root_payload, status_payload
 from .models import PlaybackCommand, SeekCommand, TargetDeviceCommand, TransferPlaybackCommand, VolumeCommand
 from .spotify import (
     SpotifyAuthNotConfigured,
@@ -36,6 +37,7 @@ async def lifespan(_: FastAPI):
     broker.set_mqtt_snapshot_factory(mqtt_knob_snapshot)
     broker.set_mqtt_config_factory(mqtt_knob_config)
     broker.set_mqtt_command_handler(handle_mqtt_command)
+    broker.set_mqtt_request_handler(handle_mqtt_request)
     await broker.start()
     if spotify.spotify_configured:
         poller.start()
@@ -445,6 +447,74 @@ async def compact_saved_tracks(
         raise translate_spotify_error(exc) from exc
 
 
+@app.get("/v1/knob/status")
+async def knob_status() -> dict[str, Any]:
+    return mqtt_status_payload()
+
+
+@app.get("/v1/knob/library/root")
+async def knob_library_root(
+    client: Annotated[SpotifyClient, Depends(spotify_client)] = spotify,
+) -> dict[str, Any]:
+    try:
+        return await build_library_root_payload(client)
+    except Exception as exc:
+        raise translate_spotify_error(exc) from exc
+
+
+@app.get("/v1/knob/library/page")
+async def knob_library_page(
+    kind: str = Query(pattern="^(playlists|saved_tracks|playlist_tracks|devices)$"),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=3, ge=1, le=10),
+    page: int = Query(default=0, ge=0, le=2),
+    parent_uri: str | None = None,
+    request_id: str | None = None,
+    client: Annotated[SpotifyClient, Depends(spotify_client)] = spotify,
+) -> dict[str, Any]:
+    try:
+        return await build_library_page_payload(
+            client,
+            request_id=request_id,
+            page=page,
+            kind=kind,
+            offset=offset,
+            limit=limit,
+            parent_uri=parent_uri,
+        )
+    except Exception as exc:
+        raise translate_spotify_error(exc) from exc
+
+
+@app.get("/v1/knob/devices")
+async def knob_devices(
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=3, ge=1, le=10),
+    request_id: str | None = None,
+    client: Annotated[SpotifyClient, Depends(spotify_client)] = spotify,
+) -> dict[str, Any]:
+    try:
+        return await build_devices_payload(client, request_id=request_id, offset=offset, limit=limit)
+    except Exception as exc:
+        raise translate_spotify_error(exc) from exc
+
+
+@app.post("/v1/knob/request")
+async def knob_request(command: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return await handle_mqtt_request(command)
+    except Exception as exc:
+        raise translate_spotify_error(exc) from exc
+
+
+@app.post("/v1/knob/command")
+async def knob_command(command: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return await handle_mqtt_command(command)
+    except Exception as exc:
+        raise translate_spotify_error(exc) from exc
+
+
 @app.get("/v1/art/current.jpg")
 async def current_art_jpg(
     size: int = Query(default=180, ge=32, le=640),
@@ -595,6 +665,7 @@ async def mqtt_knob_snapshot(version: int, state) -> dict[str, Any]:
             except Exception as exc:
                 broker.mark_spotify_error(exc)
 
+    await publish_mqtt_status()
     return knob_snapshot(
         version=version,
         state=state,
@@ -610,9 +681,19 @@ def mqtt_knob_config() -> dict[str, Any]:
     art_options = mqtt_art_options()
     topics = broker.mqtt_topics()
     return {
+        "schema_version": 2,
         "device_id": settings.mqtt_knob_device_id,
         "qos": settings.mqtt_qos,
-        "retain": {"state": True, "config": True, "command_result": False},
+        "retain": {
+            "state": True,
+            "config": True,
+            "library_root": True,
+            "library_page": True,
+            "devices": True,
+            "status": True,
+            "command_result": False,
+            "request_result": False,
+        },
         "topics": topics,
         "http": {
             "base_url": mqtt_base_url(),
@@ -639,7 +720,17 @@ def mqtt_knob_config() -> dict[str, Any]:
             "seek",
             "select_source",
             "transfer",
+            "shuffle_set",
+            "repeat_set",
+            "play_library_item",
         ],
+        "requests": ["library_root", "library_page", "devices", "refresh"],
+        "limits": {
+            "knob_visible_rows": 3,
+            "library_page_limit": 3,
+            "max_title_chars": 64,
+            "max_subtitle_chars": 64,
+        },
     }
 
 
@@ -656,6 +747,197 @@ def mqtt_base_url() -> str:
         return settings.public_base_url.rstrip("/")
     host = "localhost" if settings.host in {"0.0.0.0", "::"} else settings.host
     return f"http://{host}:{settings.port}"
+
+
+def mqtt_status_payload() -> dict[str, Any]:
+    return status_payload(
+        version=broker.version,
+        spotify_configured=spotify.spotify_configured,
+        last_poll_at=broker.last_poll_at,
+        last_error=broker.last_spotify_error,
+        current_state=broker.current_state,
+        target=store.get_target_device(),
+        mqtt_connected=settings.mqtt_enabled,
+    )
+
+
+async def publish_mqtt_status() -> None:
+    await broker.publish_mqtt_retained("status", mqtt_status_payload())
+
+
+async def build_library_root_payload(client: SpotifyClient) -> dict[str, Any]:
+    playlists_payload = await client.playlists(limit=1, offset=0)
+    saved_payload = await client.saved_tracks(limit=1, offset=0)
+    devices_raw = await client.devices()
+    devices = devices_raw.get("devices", []) if isinstance(devices_raw, dict) else []
+    return library_root_payload(
+        version=broker.version,
+        playlist_total=playlists_payload.get("total") if isinstance(playlists_payload, dict) else None,
+        saved_total=saved_payload.get("total") if isinstance(saved_payload, dict) else None,
+        device_total=len(devices),
+    )
+
+
+async def build_library_page_payload(
+    client: SpotifyClient,
+    *,
+    request_id: str | None,
+    page: int,
+    kind: str,
+    offset: int,
+    limit: int,
+    parent_uri: str | None = None,
+) -> dict[str, Any]:
+    if kind == "playlists":
+        compact = compact_playlists(await client.playlists(limit=limit, offset=offset))
+        return library_page_payload(
+            version=broker.version,
+            request_id=request_id,
+            page=page,
+            kind=kind,
+            title="Playlists",
+            compact=compact,
+        )
+
+    if kind == "saved_tracks":
+        compact = compact_tracks(await client.saved_tracks(limit=limit, offset=offset))
+        return library_page_payload(
+            version=broker.version,
+            request_id=request_id,
+            page=page,
+            kind=kind,
+            title="Saved",
+            compact=compact,
+        )
+
+    if kind == "playlist_tracks":
+        playlist_id = playlist_id_from_uri(parent_uri)
+        if not playlist_id:
+            raise ValueError("playlist_tracks requires parent_uri spotify:playlist:{id}.")
+        playlist_name = await client.playlist_name(playlist_id)
+        compact = compact_tracks(await client.playlist_tracks(playlist_id, limit=limit, offset=offset))
+        parent = {"id": playlist_id, "uri": parent_uri, "title": playlist_name or "Playlist"}
+        return library_page_payload(
+            version=broker.version,
+            request_id=request_id,
+            page=page,
+            kind=kind,
+            title=playlist_name or "Playlist",
+            compact=compact,
+            parent=parent,
+        )
+
+    if kind == "devices":
+        return await build_devices_page_payload(client, request_id=request_id, page=page, offset=offset, limit=limit)
+
+    raise ValueError(f"Unsupported library page kind: {kind}")
+
+
+async def build_devices_payload(
+    client: SpotifyClient,
+    *,
+    request_id: str | None,
+    offset: int,
+    limit: int,
+) -> dict[str, Any]:
+    payload = await client.devices()
+    devices = payload.get("devices", []) if isinstance(payload, dict) else []
+    active_device_id = None
+    for device in devices:
+        if device.get("is_active"):
+            active_device_id = device.get("id")
+            break
+    return devices_payload(
+        version=broker.version,
+        request_id=request_id,
+        devices=devices,
+        active_device_id=active_device_id,
+        target=store.get_target_device(),
+        offset=offset,
+        limit=limit,
+    )
+
+
+async def build_devices_page_payload(
+    client: SpotifyClient,
+    *,
+    request_id: str | None,
+    page: int,
+    offset: int,
+    limit: int,
+) -> dict[str, Any]:
+    devices = await build_devices_payload(client, request_id=request_id, offset=offset, limit=limit)
+    items = [
+        {
+            "slot": item["slot"],
+            "id": item["id"],
+            "uri": f"spotify:device:{item['id']}" if item.get("id") else None,
+            "title": item.get("name") or "Spotify device",
+            "subtitle": item.get("type"),
+            "image_url": None,
+            "duration_ms": None,
+            "track_count": None,
+            "playable": True,
+            "expandable": False,
+            "item_kind": "device",
+        }
+        for item in devices["items"]
+    ]
+    payload = {
+        "request_id": request_id,
+        "page": page,
+        "kind": "devices",
+        "parent": None,
+        "title": "Devices",
+        "offset": devices["offset"],
+        "limit": devices["limit"],
+        "total": devices["total"],
+        "items": items,
+    }
+    return envelope(version=broker.version, payload=payload, hash_payload={k: v for k, v in payload.items() if k != "request_id"})
+
+
+async def handle_mqtt_request(command: dict[str, Any]) -> dict[str, Any]:
+    request_type = command.get("type")
+    request_id = command.get("request_id") if isinstance(command.get("request_id"), str) else None
+    offset = int(command.get("offset") or 0)
+    limit = int(command.get("limit") or 3)
+    page = int(command.get("page") or 0)
+
+    if request_type == "library_root":
+        payload = await build_library_root_payload(spotify)
+        await broker.publish_mqtt_retained("library/root", payload)
+        return {"published_topic": broker.mqtt_topic("library/root"), "published_version": payload["version"]}
+
+    if request_type == "library_page":
+        kind = command.get("kind")
+        if not isinstance(kind, str):
+            raise ValueError("library_page requires string kind.")
+        payload = await build_library_page_payload(
+            spotify,
+            request_id=request_id,
+            page=page,
+            kind=kind,
+            offset=offset,
+            limit=limit,
+            parent_uri=command.get("parent_uri") if isinstance(command.get("parent_uri"), str) else None,
+        )
+        await broker.publish_mqtt_retained("library/page", payload)
+        return {"published_topic": broker.mqtt_topic("library/page"), "published_version": payload["version"]}
+
+    if request_type == "devices":
+        payload = await build_devices_payload(spotify, request_id=request_id, offset=offset, limit=limit)
+        await broker.publish_mqtt_retained("devices", payload)
+        page_payload = await build_devices_page_payload(spotify, request_id=request_id, page=2, offset=offset, limit=limit)
+        await broker.publish_mqtt_retained("library/page", page_payload)
+        return {"published_topic": broker.mqtt_topic("devices"), "published_version": payload["version"]}
+
+    if request_type == "refresh":
+        await refresh_and_publish(spotify)
+        await publish_mqtt_status()
+        return {"state_version": broker.version}
+
+    raise ValueError(f"Unsupported MQTT request type: {request_type}")
 
 
 async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
@@ -705,11 +987,27 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("transfer requires device_id.")
         play = command.get("play", True)
         await spotify.transfer_playback(device_id, bool(play))
+        if command.get("set_target"):
+            store.set_target_device(TargetDevice(device_id=device_id))
+    elif command_type == "shuffle_set":
+        enabled = command.get("enabled")
+        if not isinstance(enabled, bool):
+            raise ValueError("shuffle_set requires boolean enabled.")
+        await spotify.set_shuffle(enabled, await command_device_id(spotify, command.get("device_id")))
+    elif command_type == "repeat_set":
+        mode = command.get("mode")
+        if not isinstance(mode, str):
+            raise ValueError("repeat_set requires string mode.")
+        await spotify.set_repeat(mode, await command_device_id(spotify, command.get("device_id")))
+    elif command_type == "play_library_item":
+        body = play_library_item_body(command)
+        await spotify.play(body=body, device_id=await command_device_id(spotify, command.get("device_id")))
     else:
         raise ValueError(f"Unsupported MQTT command type: {command_type}")
 
     await refresh_and_publish(spotify)
-    return {"state_version": broker.version}
+    await publish_mqtt_status()
+    return {"state_version": broker.version, "published_state": True}
 
 
 def playback_body_from_mqtt(command: dict[str, Any]) -> dict[str, Any]:
@@ -724,6 +1022,43 @@ def playback_body_from_mqtt(command: dict[str, Any]) -> dict[str, Any]:
         if command.get(source) is not None:
             body[target] = command[source]
     return body
+
+
+def play_library_item_body(command: dict[str, Any]) -> dict[str, Any]:
+    context_uri = command.get("context_uri")
+    item_uri = command.get("item_uri")
+    source_kind = command.get("source_kind")
+    if isinstance(context_uri, str) and context_uri:
+        offset = command.get("offset")
+        body: dict[str, Any] = {"context_uri": context_uri}
+        if isinstance(offset, dict):
+            body["offset"] = offset
+        elif isinstance(item_uri, str) and item_uri:
+            body["offset"] = {"uri": item_uri}
+        if isinstance(command.get("position_ms"), int):
+            body["position_ms"] = command["position_ms"]
+        return body
+
+    if source_kind == "saved_tracks":
+        uris = command.get("uris")
+        if isinstance(uris, list) and all(isinstance(uri, str) for uri in uris):
+            body = {"uris": uris}
+            if isinstance(item_uri, str) and item_uri in uris:
+                body["offset"] = {"position": uris.index(item_uri)}
+            return body
+        if isinstance(item_uri, str) and item_uri:
+            return {"uris": [item_uri]}
+
+    raise ValueError("play_library_item requires context_uri or saved_tracks item_uri.")
+
+
+def playlist_id_from_uri(uri: str | None) -> str | None:
+    if not uri:
+        return None
+    parts = uri.split(":")
+    if len(parts) != 3 or parts[0] != "spotify" or parts[1] != "playlist" or not parts[2]:
+        return None
+    return parts[2]
 
 
 async def resolved_context_name(

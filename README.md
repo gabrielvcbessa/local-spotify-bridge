@@ -358,6 +358,12 @@ rotary/<device_id>/config         retained, bridge -> knob
 rotary/<device_id>/command        non-retained, knob -> bridge
 rotary/<device_id>/command_result non-retained, bridge -> knob
 rotary/<device_id>/availability   retained, knob -> bridge
+rotary/<device_id>/library/root   retained, bridge -> knob
+rotary/<device_id>/library/page   retained, bridge -> knob
+rotary/<device_id>/devices        retained, bridge -> knob
+rotary/<device_id>/status         retained, bridge -> knob
+rotary/<device_id>/request        non-retained, knob -> bridge
+rotary/<device_id>/request_result non-retained, bridge -> knob
 ```
 
 The default `<device_id>` is `knob`; set `MQTT_KNOB_DEVICE_ID=kitchen` or another stable name for a
@@ -369,8 +375,8 @@ The bridge computes the art byte hash from the cached RGB565 payload when possib
 fails, state still publishes and the art endpoint remains the source of truth for image headers.
 
 The retained `config` message advertises the active topics, HTTP base URL, art recipe, QoS, and
-supported commands. The legacy retained `local-spotify-bridge/playback` envelope is still published
-for existing clients.
+supported commands/requests. The legacy retained `local-spotify-bridge/playback` envelope is still
+published for existing clients.
 
 MQTT command examples:
 
@@ -381,11 +387,41 @@ MQTT command examples:
 { "type": "volume_set", "volume_percent": 42 }
 { "type": "seek", "position_ms": 30000 }
 { "type": "select_source", "uri": "spotify:playlist:..." }
+{ "type": "shuffle_set", "enabled": true }
+{ "type": "repeat_set", "mode": "context" }
+{ "type": "transfer", "device_id": "...", "play": true, "set_target": true }
+{ "type": "play_library_item", "context_uri": "spotify:playlist:...", "item_uri": "spotify:track:..." }
 ```
 
 After a successful command, the bridge refreshes Spotify state and publishes an updated retained
 snapshot. `volume_set` is ignored with a successful command result when the current device reports
 `volume_control_supported: false`.
+
+MQTT request examples for non-playback data:
+
+```json
+{ "request_id": "knob-1", "type": "library_root" }
+{ "request_id": "knob-2", "type": "library_page", "kind": "playlists", "page": 0, "offset": 0, "limit": 3 }
+{ "request_id": "knob-3", "type": "library_page", "kind": "playlist_tracks", "parent_uri": "spotify:playlist:...", "offset": 0, "limit": 3 }
+{ "request_id": "knob-4", "type": "devices", "offset": 0, "limit": 3 }
+{ "request_id": "knob-5", "type": "refresh" }
+```
+
+The bridge publishes request payloads to retained library/device topics and answers on
+`request_result`. Retained payloads include `version`, `hash`, and `updated_at_ms`, so the knob can
+skip redraws when content has not changed.
+
+REST mirrors for debugging:
+
+```text
+GET  /v1/knob/status
+GET  /v1/knob/library/root
+GET  /v1/knob/library/page?kind=playlists&offset=0&limit=3
+GET  /v1/knob/library/page?kind=playlist_tracks&parent_uri=spotify:playlist:...&offset=0&limit=3
+GET  /v1/knob/devices?offset=0&limit=3
+POST /v1/knob/request
+POST /v1/knob/command
+```
 
 MQTT retained messages do not wake a deeply sleeping Wi-Fi device, but wake-up is fast: the knob
 connects, receives retained `config` and `state`, redraws only if hashes changed, and can go back to

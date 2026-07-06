@@ -179,6 +179,20 @@ class SpotifyClient:
             params["device_id"] = device_id
         await self.request("PUT", "/me/player/volume", params=params, expected_statuses={204})
 
+    async def set_shuffle(self, enabled: bool, device_id: str | None = None) -> None:
+        params: dict[str, Any] = {"state": str(enabled).lower()}
+        if device_id:
+            params["device_id"] = device_id
+        await self.request("PUT", "/me/player/shuffle", params=params, expected_statuses={204})
+
+    async def set_repeat(self, mode: str, device_id: str | None = None) -> None:
+        if mode not in {"off", "context", "track"}:
+            raise ValueError("repeat mode must be off, context, or track.")
+        params: dict[str, Any] = {"state": mode}
+        if device_id:
+            params["device_id"] = device_id
+        await self.request("PUT", "/me/player/repeat", params=params, expected_statuses={204})
+
     async def devices(self) -> Any:
         return await self.request("GET", "/me/player/devices")
 
