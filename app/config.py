@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     mqtt_knob_topic_prefix: str = Field(default="rotary", alias="MQTT_KNOB_TOPIC_PREFIX")
     mqtt_knob_device_id: str = Field(default="knob", alias="MQTT_KNOB_DEVICE_ID")
     mqtt_qos: int = Field(default=1, alias="MQTT_QOS")
-    mqtt_knob_art_size: int = Field(default=180, alias="MQTT_KNOB_ART_SIZE")
+    mqtt_knob_art_size: int = Field(default=360, alias="MQTT_KNOB_ART_SIZE")
     mqtt_knob_art_swap: str = Field(default="lvgl", alias="MQTT_KNOB_ART_SWAP")
     mqtt_knob_art_variant: str = Field(default="player-bg", alias="MQTT_KNOB_ART_VARIANT")
 

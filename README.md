@@ -123,6 +123,7 @@ MQTT_PORT=1883
 MQTT_KNOB_TOPIC_PREFIX=rotary
 MQTT_KNOB_DEVICE_ID=kitchen
 MQTT_QOS=1
+MQTT_KNOB_ART_SIZE=360
 ```
 
 ## Spotify Rate Limits
@@ -164,9 +165,9 @@ curl http://localhost:8090/v1/saved-tracks
 curl http://localhost:8090/v1/library/playlists
 curl http://localhost:8090/v1/library/playlists/{playlist_id}/tracks
 curl http://localhost:8090/v1/library/saved-tracks
-curl "http://localhost:8090/v1/knob/snapshot?refresh=true&art_size=180&art_format=rotary-lvgl"
+curl "http://localhost:8090/v1/knob/snapshot?refresh=true&art_size=360&art_format=rotary-lvgl"
 curl "http://localhost:8090/v1/art/current.jpg?size=180"
-curl -o current.rgb565 "http://localhost:8090/v1/knob/art/current.rgb565?size=180&format=rotary-lvgl&variant=player-bg"
+curl -o current.rgb565 "http://localhost:8090/v1/knob/art/current.rgb565?size=360&format=rotary-lvgl&variant=player-bg"
 ```
 
 `/v1/playlists`, `/v1/playlists/{id}/tracks`, and `/v1/saved-tracks` remain raw Spotify pass-through
@@ -215,8 +216,8 @@ Artwork endpoints:
 ```text
 GET /v1/art/current.jpg?size=180
 GET /v1/art/current.rgb565?size=180&swap=lvgl&variant=player-bg
-GET /v1/knob/art/current.rgb565?size=180&format=rotary-lvgl&variant=player-bg
-GET /v1/knob/art/test-pattern.rgb565?size=180&format=rotary-lvgl
+GET /v1/knob/art/current.rgb565?size=360&format=rotary-lvgl&variant=player-bg
+GET /v1/knob/art/test-pattern.rgb565?size=360&format=rotary-lvgl
 GET /v1/art/proxy.jpg?url={spotify_image_url}&size=180
 GET /v1/art/{spotify_image_id}.rgb565?size=180&swap=lvgl&variant=player-bg
 ```
@@ -233,15 +234,15 @@ overlay baked into the pixels.
 The knob-oriented endpoint is:
 
 ```text
-GET /v1/knob/art/current.rgb565?size=180&format=rotary-lvgl&variant=player-bg
+GET /v1/knob/art/current.rgb565?size=360&format=rotary-lvgl&variant=player-bg
 ```
 
 Response headers:
 
 ```text
 Content-Type: application/octet-stream
-X-Image-Width: 180
-X-Image-Height: 180
+X-Image-Width: 360
+X-Image-Height: 360
 X-Image-Format: rgb565
 X-Image-Byte-Order: rotary-lvgl
 X-Image-Target: rotary-os-lvgl-image-source
@@ -251,13 +252,13 @@ X-Image-Hash: sha256-of-final-processed-art-bytes
 Cache-Control: public, max-age=86400
 ```
 
-For `size=180`, the payload is exactly `180 * 180 * 2 = 64800` bytes. Processed artwork is cached
+For `size=360`, the payload is exactly `360 * 360 * 2 = 259200` bytes. Processed artwork is cached
 under the bridge data directory by Spotify image id and transform options.
 
 For display diagnostics, request:
 
 ```text
-GET /v1/knob/art/test-pattern.rgb565?size=180&format=rotary-lvgl
+GET /v1/knob/art/test-pattern.rgb565?size=360&format=rotary-lvgl
 ```
 
 The diagnostic payload is red, green, blue, white, and black vertical bars in the same byte order as
@@ -270,7 +271,7 @@ without waiting for album art.
 {
   "album_art_url": "https://i.scdn.co/image/...",
   "album_art_id": "ab67616d0000b273adfc1ac5836f96adac580271",
-  "knob_art_url": "http://YOUR_SERVER_IP:8090/v1/knob/art/current.rgb565?size=180&format=rotary-lvgl&variant=player-bg",
+  "knob_art_url": "http://YOUR_SERVER_IP:8090/v1/knob/art/current.rgb565?size=360&format=rotary-lvgl&variant=player-bg",
   "knob_art_version": "ab67616d0000b273adfc1ac5836f96adac580271"
 }
 ```
@@ -282,7 +283,7 @@ The knob should compare `knob_art_version`; if unchanged, it can skip fetching a
 The easiest firmware endpoint is:
 
 ```text
-GET /v1/knob/snapshot?refresh=true&art_size=180&art_format=rotary-lvgl&art_variant=player-bg
+GET /v1/knob/snapshot?refresh=true&art_size=360&art_format=rotary-lvgl&art_variant=player-bg
 ```
 
 It returns one compact render payload with deterministic hashes:
@@ -317,12 +318,12 @@ It returns one compact render payload with deterministic hashes:
     "art": {
       "id": "next-spotify-image-id",
       "version": "sha256-of-source-art-and-processing-options",
-      "url": "http://bridge.local:8090/v1/art/next-spotify-image-id.rgb565?size=180&swap=lvgl&variant=player-bg",
-      "width": 180,
-      "height": 180,
+      "url": "http://bridge.local:8090/v1/art/next-spotify-image-id.rgb565?size=360&swap=lvgl&variant=player-bg",
+      "width": 360,
+      "height": 360,
       "format": "rgb565",
       "byte_order": "rotary-lvgl",
-      "content_length": 64800
+      "content_length": 259200
     }
   },
   "context": {
@@ -354,12 +355,12 @@ It returns one compact render payload with deterministic hashes:
     "version": "sha256-of-source-art-and-processing-options",
     "hash": "sha256-of-final-processed-art-bytes",
     "variant": "player-bg",
-    "url": "http://YOUR_SERVER_IP:8090/v1/knob/art/current.rgb565?size=180&format=rotary-lvgl&variant=player-bg",
-    "width": 180,
-    "height": 180,
+    "url": "http://YOUR_SERVER_IP:8090/v1/knob/art/current.rgb565?size=360&format=rotary-lvgl&variant=player-bg",
+    "width": 360,
+    "height": 360,
     "format": "rgb565",
     "byte_order": "rotary-lvgl",
-    "content_length": 64800
+    "content_length": 259200
   },
   "server": {
     "ok": true,

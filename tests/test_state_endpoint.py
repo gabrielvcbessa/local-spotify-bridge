@@ -21,8 +21,44 @@ def test_state_adds_stable_knob_art_url_and_version():
 
     assert response.status_code == 200
     state = response.json()["state"]
-    assert state["knob_art_url"] == "http://bridge.local:8090/v1/knob/art/current.rgb565?size=180&format=rotary-lvgl&variant=player-bg"
+    assert state["knob_art_url"] == "http://bridge.local:8090/v1/knob/art/current.rgb565?size=360&format=rotary-lvgl&variant=player-bg"
     assert state["knob_art_version"] == "ab67616d0000b273adfc1ac5836f96adac580271"
+
+
+def test_knob_snapshot_defaults_to_stopwatch_art_size(monkeypatch):
+    previous = broker.current_state
+    art_payload = b"\x00" * 259200
+
+    async def fake_cached_rgb565_art(*args, **kwargs):
+        return art_payload
+
+    monkeypatch.setattr(main, "cached_rgb565_art", fake_cached_rgb565_art)
+    broker.current_state = PlaybackSnapshot(
+        album_art_url="https://i.scdn.co/image/ab67616d0000b273adfc1ac5836f96adac580271",
+        album_art_id="ab67616d0000b273adfc1ac5836f96adac580271",
+    )
+    try:
+        response = TestClient(app).get("/v1/knob/snapshot", headers={"host": "bridge.local:8090"})
+    finally:
+        broker.current_state = previous
+
+    assert response.status_code == 200
+    art = response.json()["art"]
+    assert art["url"] == "http://bridge.local:8090/v1/knob/art/current.rgb565?size=360&format=rotary-lvgl&variant=player-bg"
+    assert art["width"] == 360
+    assert art["height"] == 360
+    assert art["content_length"] == 259200
+    assert response.json()["art_hash"] == bytes_hash(art_payload)
+
+
+def test_mqtt_knob_config_defaults_to_stopwatch_art_size():
+    config = main.mqtt_knob_config()
+
+    assert main.mqtt_art_options().size == 360
+    assert config["http"]["art_url"] == (
+        "http://localhost:8090/v1/knob/art/current.rgb565"
+        "?size=360&format=rotary-lvgl&variant=player-bg"
+    )
 
 
 def test_knob_snapshot_shapes_render_contract_and_hashes(monkeypatch):
