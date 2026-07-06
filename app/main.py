@@ -9,6 +9,7 @@ from PIL import Image
 from .art import ArtCache, ArtOptions, art_version, bytes_hash, display_ready_rgb565, image_to_rgb565
 from .broker import ConnectionBroker, StatePoller
 from .config import get_settings
+from .context_cache import PlaylistNameCache, playback_context_parts, schedule_playlist_resolve
 from .knob import knob_snapshot
 from .models import PlaybackCommand, SeekCommand, TargetDeviceCommand, TransferPlaybackCommand, VolumeCommand
 from .spotify import (
@@ -27,6 +28,7 @@ spotify = SpotifyClient(settings, store)
 broker = ConnectionBroker(settings)
 poller = StatePoller(spotify.current_playback, broker, settings.poll_interval_seconds)
 art_cache = ArtCache(settings)
+playlist_name_cache = PlaylistNameCache()
 
 
 @asynccontextmanager
@@ -197,6 +199,11 @@ async def get_knob_snapshot(
         except Exception as exc:
             raise translate_spotify_error(exc) from exc
     art_options = ArtOptions(size=art_size, swap=swap, variant=art_variant)
+    context_name = await resolved_context_name(
+        client,
+        state_broker.current_state,
+        resolve_inline=refresh,
+    )
     art_hash = None
     if state_broker.current_state and state_broker.current_state.album_art_url:
         image_id = state_broker.current_state.album_art_id or state_broker.current_state.knob_art_version
@@ -219,6 +226,7 @@ async def get_knob_snapshot(
         spotify_configured=client.spotify_configured,
         art_options=art_options,
         art_hash=art_hash,
+        context_name=context_name,
     )
 
 
@@ -550,6 +558,48 @@ async def command_device_id(client: SpotifyClient, explicit_device_id: str | Non
 
 async def refresh_and_publish(client: SpotifyClient) -> None:
     await broker.publish_if_changed(await client.current_playback())
+
+
+async def resolved_context_name(
+    client: SpotifyClient,
+    state,
+    *,
+    resolve_inline: bool,
+) -> str | None:
+    if state is None:
+        return None
+    context = playback_context_parts(state)
+    if context["type"] != "playlist" or not context["id"]:
+        return state.album
+    if context["name"]:
+        return context["name"]
+
+    playlist_id = context["id"]
+    cached_name = playlist_name_cache.get(playlist_id)
+    if cached_name is not None:
+        return cached_name
+
+    if not client.spotify_configured:
+        return None
+
+    if resolve_inline:
+        try:
+            name = await playlist_name_cache.resolve_once(playlist_id, client.playlist_name)
+            if name:
+                await broker.publish_metadata_changed()
+            return name
+        except Exception as exc:
+            broker.mark_spotify_error(exc)
+            return None
+
+    schedule_playlist_resolve(
+        playlist_name_cache,
+        playlist_id,
+        client.playlist_name,
+        broker.publish_metadata_changed,
+        broker.mark_spotify_error,
+    )
+    return None
 
 
 def state_payload(state, request: Request) -> dict[str, Any]:

@@ -215,6 +215,18 @@ class SpotifyClient:
             params={"limit": limit, "offset": offset},
         )
 
+    async def playlist(self, playlist_id: str) -> Any:
+        return await self.request(
+            "GET",
+            f"/playlists/{playlist_id}",
+            params={"fields": "id,name,uri"},
+        )
+
+    async def playlist_name(self, playlist_id: str) -> str | None:
+        payload = await self.playlist(playlist_id)
+        name = payload.get("name") if isinstance(payload, dict) else None
+        return name if isinstance(name, str) and name else None
+
     async def saved_tracks(self, limit: int = 50, offset: int = 0) -> Any:
         return await self.request("GET", "/me/tracks", params={"limit": limit, "offset": offset})
 

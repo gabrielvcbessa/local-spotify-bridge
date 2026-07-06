@@ -4,7 +4,26 @@ import time
 from typing import Any
 
 from .art import ArtOptions, art_version
+from .context_cache import playback_context_parts
 from .models import PlaybackSnapshot
+
+
+def knob_context(state: PlaybackSnapshot, context_name: str | None = None) -> dict[str, str | None]:
+    parts = playback_context_parts(state)
+    fallback_name = state.album
+    name = context_name or parts["name"]
+    if parts["type"] != "playlist":
+        name = parts["name"] or fallback_name
+    display_name = name or fallback_name
+    context = {
+        "type": parts["type"],
+        "uri": parts["uri"],
+        "id": parts["id"],
+        "name": name,
+        "display_name": display_name,
+        "fallback_name": fallback_name,
+    }
+    return context
 
 
 def knob_snapshot(
@@ -41,12 +60,7 @@ def knob_snapshot(
         return snapshot
 
     artist_text = ", ".join(state.artists)
-    context = {
-        "type": context_type(state),
-        "uri": context_uri(state),
-        "name": context_name if context_type(state) == "playlist" else None,
-        "fallback_name": state.album,
-    }
+    context = knob_context(state, context_name)
     device = {
         "id": state.device_id,
         "name": state.device_name,
@@ -134,19 +148,3 @@ def knob_art_payload(
 def stable_hash(payload: Any) -> str:
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
     return hashlib.sha256(encoded).hexdigest()
-
-
-def context_type(state: PlaybackSnapshot) -> str | None:
-    uri = context_uri(state)
-    if not uri:
-        return None
-    parts = uri.split(":")
-    return parts[1] if len(parts) > 1 else None
-
-
-def context_uri(state: PlaybackSnapshot) -> str | None:
-    context = state.raw.get("context") if isinstance(state.raw, dict) else None
-    if isinstance(context, dict):
-        uri = context.get("uri")
-        return uri if isinstance(uri, str) else None
-    return None

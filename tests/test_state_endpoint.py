@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app.art import ArtOptions, art_version, bytes_hash
+from app.knob import knob_snapshot
 import app.main as main
 from app.main import app, broker
 from app.models import PlaybackSnapshot
@@ -71,7 +72,9 @@ def test_knob_snapshot_shapes_render_contract_and_hashes(monkeypatch):
     assert payload["context"] == {
         "type": "playlist",
         "uri": "spotify:playlist:playlist-id",
+        "id": "playlist-id",
         "name": None,
+        "display_name": "Album name",
         "fallback_name": "Album name",
     }
     assert payload["device"]["can_control_playback"] is True
@@ -93,3 +96,31 @@ def test_knob_snapshot_shapes_render_contract_and_hashes(monkeypatch):
         "content_length": 64800,
     }
     assert payload["server"]["ok"] is True
+
+
+def test_knob_snapshot_uses_resolved_playlist_display_name():
+    state = PlaybackSnapshot(
+        album="Album fallback",
+        raw={"context": {"uri": "spotify:playlist:playlist-id"}},
+    )
+
+    unresolved = knob_snapshot(
+        version=1,
+        state=state,
+        base_url="http://bridge.local:8090",
+        spotify_configured=True,
+        art_options=ArtOptions(),
+    )
+    resolved = knob_snapshot(
+        version=1,
+        state=state,
+        base_url="http://bridge.local:8090",
+        spotify_configured=True,
+        art_options=ArtOptions(),
+        context_name="Playlist name",
+    )
+
+    assert unresolved["context"]["display_name"] == "Album fallback"
+    assert resolved["context"]["name"] == "Playlist name"
+    assert resolved["context"]["display_name"] == "Playlist name"
+    assert unresolved["playback_hash"] != resolved["playback_hash"]

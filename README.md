@@ -246,7 +246,9 @@ It returns one compact render payload with deterministic hashes:
   "context": {
     "type": "playlist",
     "uri": "spotify:playlist:...",
-    "name": null,
+    "id": "spotify-playlist-id",
+    "name": "Playlist name once resolved",
+    "display_name": "Playlist name once resolved, otherwise Album name",
     "fallback_name": "Album name"
   },
   "device": {
@@ -288,13 +290,19 @@ It returns one compact render payload with deterministic hashes:
 Firmware behavior:
 
 - `payload_hash` changes when anything render-relevant changes.
-- `playback_hash` changes when track text, play state, device, volume, shuffle, or repeat changes.
+- `playback_hash` changes when track text, context id/name/display name, play state, device, volume,
+  shuffle, or repeat changes.
 - `art.version` changes when the source art id or processing recipe changes.
 - `art.hash` and top-level `art_hash` are the SHA-256 of the final processed RGB565 bytes.
 - If both `art.version` and `art.hash` are unchanged, do not fetch `art.url` again.
 - If `device.can_control_playback` is `false`, show state but avoid commands.
 - If `device.volume_control_supported` is `false`, do not send volume commands.
-- If `context.name` is null, use `context.fallback_name`.
+- Use `context.display_name` for UI text. The server resolves playlist names when possible and falls
+  back to album name for non-playlist or unresolved contexts.
+
+Playlist context names are cached by playlist id for 24 hours. If the name is not cached, the snapshot
+returns immediately with `display_name` set to `fallback_name` and triggers a resolve when possible.
+Failures are cached briefly for 5 minutes to avoid retry storms; `/v1/knob/snapshot` still succeeds.
 
 ## Listener Contract
 

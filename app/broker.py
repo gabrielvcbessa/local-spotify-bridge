@@ -105,6 +105,10 @@ class ConnectionBroker:
         await self.publish("playback.changed", new_state)
         return True
 
+    async def publish_metadata_changed(self) -> None:
+        self._version += 1
+        await self.publish("metadata.changed", self.current_state)
+
     def mark_spotify_success(self) -> None:
         self.last_poll_at = datetime.now(UTC).isoformat()
         self.last_spotify_error = None
