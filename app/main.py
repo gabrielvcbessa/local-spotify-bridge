@@ -6,9 +6,10 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, 
 from fastapi.responses import JSONResponse, Response
 from PIL import Image
 
-from .art import ArtCache, ArtOptions, display_ready_rgb565, image_to_rgb565
+from .art import ArtCache, ArtOptions, art_version, bytes_hash, display_ready_rgb565, image_to_rgb565
 from .broker import ConnectionBroker, StatePoller
 from .config import get_settings
+from .knob import knob_snapshot
 from .models import PlaybackCommand, SeekCommand, TargetDeviceCommand, TransferPlaybackCommand, VolumeCommand
 from .spotify import (
     SpotifyAuthNotConfigured,
@@ -176,6 +177,49 @@ async def get_target(
         "target": target.model_dump(mode="json") if target else None,
         "resolved_device_id": resolved_device_id,
     }
+
+
+@app.get("/v1/knob/snapshot")
+async def get_knob_snapshot(
+    request: Request,
+    refresh: bool = False,
+    art_size: int = Query(default=180, ge=32, le=640),
+    art_format: str = Query(default="rgb565", pattern="^rgb565$"),
+    swap: str = Query(default="lvgl", pattern="^(lvgl|none)$"),
+    art_variant: str = Query(default="player-bg", pattern="^player-bg$"),
+    client: Annotated[SpotifyClient, Depends(spotify_client)] = spotify,
+    state_broker: Annotated[ConnectionBroker, Depends(bridge_broker)] = broker,
+) -> dict[str, Any]:
+    _ = art_format
+    if refresh:
+        try:
+            await state_broker.publish_if_changed(await client.current_playback())
+        except Exception as exc:
+            raise translate_spotify_error(exc) from exc
+    art_options = ArtOptions(size=art_size, swap=swap, variant=art_variant)
+    art_hash = None
+    if state_broker.current_state and state_broker.current_state.album_art_url:
+        image_id = state_broker.current_state.album_art_id or state_broker.current_state.knob_art_version
+        if image_id:
+            try:
+                art_payload = await cached_rgb565_art(
+                    client,
+                    image_id,
+                    state_broker.current_state.album_art_url,
+                    art_options,
+                )
+                art_hash = bytes_hash(art_payload)
+            except Exception as exc:
+                raise translate_spotify_error(exc) from exc
+
+    return knob_snapshot(
+        version=state_broker.version,
+        state=state_broker.current_state,
+        base_url=public_base_url(request),
+        spotify_configured=client.spotify_configured,
+        art_options=art_options,
+        art_hash=art_hash,
+    )
 
 
 @app.post("/v1/target")
@@ -399,10 +443,11 @@ async def current_art_jpg(
 async def current_art_rgb565(
     size: int = Query(default=180, ge=32, le=640),
     swap: str = Query(default="lvgl", pattern="^(lvgl|none)$"),
+    variant: str = Query(default="player-bg", pattern="^player-bg$"),
     theme: str = Query(default="dark", pattern="^(dark|none)$"),
-    darken: float = Query(default=0.22, ge=0.0, le=0.85),
-    saturation: float = Query(default=1.08, ge=0.0, le=3.0),
-    contrast: float = Query(default=1.05, ge=0.0, le=3.0),
+    darken: float = Query(default=0.52, ge=0.0, le=0.85),
+    saturation: float = Query(default=0.9, ge=0.0, le=3.0),
+    contrast: float = Query(default=1.08, ge=0.0, le=3.0),
     blur: float = Query(default=0.0, ge=0.0, le=6.0),
     circle: bool = False,
     client: Annotated[SpotifyClient, Depends(spotify_client)] = spotify,
@@ -416,6 +461,40 @@ async def current_art_rgb565(
         size=size,
         theme=theme,
         swap=swap,
+        variant=variant,
+        darken=darken,
+        saturation=saturation,
+        contrast=contrast,
+        blur=blur,
+        circle=circle,
+    )
+    payload = await cached_rgb565_art(client, image_id, broker.current_state.album_art_url, options)
+    return rgb565_response(payload, options, image_id)
+
+
+@app.get("/v1/knob/art/current.rgb565")
+async def knob_current_art_rgb565(
+    size: int = Query(default=180, ge=32, le=640),
+    swap: str = Query(default="lvgl", pattern="^(lvgl|none)$"),
+    variant: str = Query(default="player-bg", pattern="^player-bg$"),
+    theme: str = Query(default="dark", pattern="^(dark|none)$"),
+    darken: float = Query(default=0.52, ge=0.0, le=0.85),
+    saturation: float = Query(default=0.9, ge=0.0, le=3.0),
+    contrast: float = Query(default=1.08, ge=0.0, le=3.0),
+    blur: float = Query(default=0.0, ge=0.0, le=6.0),
+    circle: bool = False,
+    client: Annotated[SpotifyClient, Depends(spotify_client)] = spotify,
+):
+    if not broker.current_state or not broker.current_state.album_art_url:
+        raise HTTPException(status_code=404, detail="No current album art available.")
+    image_id = broker.current_state.album_art_id or broker.current_state.knob_art_version
+    if not image_id:
+        raise HTTPException(status_code=404, detail="Current album art has no cacheable image id.")
+    options = ArtOptions(
+        size=size,
+        theme=theme,
+        swap=swap,
+        variant=variant,
         darken=darken,
         saturation=saturation,
         contrast=contrast,
@@ -440,10 +519,11 @@ async def spotify_art_rgb565(
     spotify_image_id: str,
     size: int = Query(default=180, ge=32, le=640),
     swap: str = Query(default="lvgl", pattern="^(lvgl|none)$"),
+    variant: str = Query(default="player-bg", pattern="^player-bg$"),
     theme: str = Query(default="dark", pattern="^(dark|none)$"),
-    darken: float = Query(default=0.22, ge=0.0, le=0.85),
-    saturation: float = Query(default=1.08, ge=0.0, le=3.0),
-    contrast: float = Query(default=1.05, ge=0.0, le=3.0),
+    darken: float = Query(default=0.52, ge=0.0, le=0.85),
+    saturation: float = Query(default=0.9, ge=0.0, le=3.0),
+    contrast: float = Query(default=1.08, ge=0.0, le=3.0),
     blur: float = Query(default=0.0, ge=0.0, le=6.0),
     circle: bool = False,
     client: Annotated[SpotifyClient, Depends(spotify_client)] = spotify,
@@ -453,6 +533,7 @@ async def spotify_art_rgb565(
         size=size,
         theme=theme,
         swap=swap,
+        variant=variant,
         darken=darken,
         saturation=saturation,
         contrast=contrast,
@@ -512,7 +593,9 @@ def rgb565_response(payload: bytes, options: ArtOptions, image_id: str) -> Respo
             "X-Image-Height": str(options.size),
             "X-Image-Format": "rgb565",
             "X-Image-Byte-Order": options.byte_order,
-            "X-Image-Version": image_id,
+            "X-Image-Variant": options.variant,
+            "X-Image-Version": art_version(image_id, options),
+            "X-Image-Hash": bytes_hash(payload),
             "Cache-Control": "public, max-age=86400",
         },
     )

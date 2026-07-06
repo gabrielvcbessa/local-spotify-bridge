@@ -1,4 +1,6 @@
 from dataclasses import dataclass
+import hashlib
+import json
 from io import BytesIO
 from pathlib import Path
 
@@ -12,15 +14,30 @@ class ArtOptions:
     size: int = 180
     theme: str = "dark"
     swap: str = "lvgl"
+    variant: str = "player-bg"
     blur: float = 0.0
-    darken: float = 0.22
-    saturation: float = 1.08
-    contrast: float = 1.05
+    darken: float = 0.52
+    saturation: float = 0.9
+    contrast: float = 1.08
     circle: bool = False
 
     @property
     def byte_order(self) -> str:
         return "lvgl-swap" if self.swap == "lvgl" else "big-endian"
+
+    def cache_key(self) -> dict[str, object]:
+        return {
+            "size": self.size,
+            "theme": self.theme,
+            "swap": self.swap,
+            "variant": self.variant,
+            "blur": self.blur,
+            "darken": self.darken,
+            "saturation": self.saturation,
+            "contrast": self.contrast,
+            "circle": self.circle,
+            "format": "rgb565",
+        }
 
 
 class ArtCache:
@@ -33,6 +50,7 @@ class ArtCache:
             f"-size{options.size}"
             f"-theme{options.theme}"
             f"-swap{options.swap}"
+            f"-variant{options.variant}"
             f"-blur{options.blur:g}"
             f"-dark{options.darken:g}"
             f"-sat{options.saturation:g}"
@@ -73,6 +91,19 @@ def display_ready_rgb565(original: bytes, options: ArtOptions) -> bytes:
             image = apply_circle_mask(image)
 
         return image_to_rgb565(image, swap=options.swap)
+
+
+def art_version(image_id: str, options: ArtOptions) -> str:
+    return stable_hash({"source": image_id, "processing": options.cache_key()})
+
+
+def bytes_hash(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()
+
+
+def stable_hash(payload: object) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def center_crop_square(image: Image.Image) -> Image.Image:
@@ -118,4 +149,3 @@ def image_to_rgb565(image: Image.Image, *, swap: str = "none") -> bytes:
             pixels.append(high)
             pixels.append(low)
     return bytes(pixels)
-

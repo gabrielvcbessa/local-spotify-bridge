@@ -126,6 +126,7 @@ curl http://localhost:8090/v1/saved-tracks
 curl http://localhost:8090/v1/library/playlists
 curl http://localhost:8090/v1/library/playlists/{playlist_id}/tracks
 curl http://localhost:8090/v1/library/saved-tracks
+curl "http://localhost:8090/v1/knob/snapshot?refresh=true&art_size=180&art_format=rgb565&swap=lvgl"
 curl "http://localhost:8090/v1/art/current.jpg?size=180"
 curl -o current.rgb565 "http://localhost:8090/v1/art/current.rgb565?size=180&swap=lvgl"
 ```
@@ -166,19 +167,23 @@ Artwork endpoints:
 
 ```text
 GET /v1/art/current.jpg?size=180
-GET /v1/art/current.rgb565?size=180&swap=lvgl
+GET /v1/art/current.rgb565?size=180&swap=lvgl&variant=player-bg
+GET /v1/knob/art/current.rgb565?size=180&swap=lvgl&variant=player-bg
 GET /v1/art/proxy.jpg?url={spotify_image_url}&size=180
-GET /v1/art/{spotify_image_id}.rgb565?size=180&swap=lvgl
+GET /v1/art/{spotify_image_id}.rgb565?size=180&swap=lvgl&variant=player-bg
 ```
 
 The JPEG endpoints return resized square JPEGs. The RGB565 endpoints return display-ready square
-raw RGB565 bytes after center crop, resize, light contrast/saturation tuning, and a baked dark
+raw RGB565 bytes after center crop, resize, player-background tuning, and a baked uniform dark
 overlay. `swap=lvgl` returns LVGL-friendly swapped byte order. `swap=none` returns big-endian RGB565.
+`variant=player-bg` applies the final knob player background recipe: no transparent zones, no
+gradients, no partial masks, reduced saturation, preserved contrast, and a roughly 45-60% black
+overlay baked into the pixels.
 
 The knob-oriented endpoint is:
 
 ```text
-GET /v1/art/current.rgb565?size=180&swap=lvgl
+GET /v1/knob/art/current.rgb565?size=180&swap=lvgl&variant=player-bg
 ```
 
 Response headers:
@@ -189,6 +194,9 @@ X-Image-Width: 180
 X-Image-Height: 180
 X-Image-Format: rgb565
 X-Image-Byte-Order: lvgl-swap
+X-Image-Variant: player-bg
+X-Image-Version: sha256-of-source-art-and-processing-options
+X-Image-Hash: sha256-of-final-processed-art-bytes
 Cache-Control: public, max-age=86400
 ```
 
@@ -207,6 +215,86 @@ under the bridge data directory by Spotify image id and transform options.
 ```
 
 The knob should compare `knob_art_version`; if unchanged, it can skip fetching art again.
+
+## Knob Snapshot
+
+The easiest firmware endpoint is:
+
+```text
+GET /v1/knob/snapshot?refresh=true&art_size=180&art_format=rgb565&swap=lvgl&art_variant=player-bg
+```
+
+It returns one compact render payload with deterministic hashes:
+
+```json
+{
+  "version": 42,
+  "payload_hash": "sha256-of-render-relevant-fields",
+  "playback_hash": "sha256-of-track-play-state-device-volume-modes",
+  "art_hash": "sha256-of-current-knob-art",
+  "is_playing": true,
+  "progress_ms": 12345,
+  "duration_ms": 180000,
+  "track": {
+    "id": "spotify-track-id",
+    "uri": "spotify:track:...",
+    "title": "Song name",
+    "artists": ["Artist 1", "Artist 2"],
+    "artist_text": "Artist 1, Artist 2",
+    "album": "Album name"
+  },
+  "context": {
+    "type": "playlist",
+    "uri": "spotify:playlist:...",
+    "name": null,
+    "fallback_name": "Album name"
+  },
+  "device": {
+    "id": "spotify-device-id",
+    "name": "Living Room Speaker",
+    "type": "Smartphone",
+    "is_active": true,
+    "is_restricted": null,
+    "can_control_playback": true,
+    "can_skip_next": true,
+    "can_skip_previous": true,
+    "volume_percent": 42,
+    "volume_control_supported": true
+  },
+  "modes": {
+    "shuffle": false,
+    "repeat": "off"
+  },
+  "art": {
+    "id": "spotify-image-id",
+    "version": "sha256-of-source-art-and-processing-options",
+    "hash": "sha256-of-final-processed-art-bytes",
+    "variant": "player-bg",
+    "url": "http://YOUR_SERVER_IP:8090/v1/knob/art/current.rgb565?size=180&swap=lvgl&variant=player-bg",
+    "width": 180,
+    "height": 180,
+    "format": "rgb565",
+    "byte_order": "lvgl-swap",
+    "content_length": 64800
+  },
+  "server": {
+    "ok": true,
+    "spotify_configured": true,
+    "updated_at_ms": 1783301820991
+  }
+}
+```
+
+Firmware behavior:
+
+- `payload_hash` changes when anything render-relevant changes.
+- `playback_hash` changes when track text, play state, device, volume, shuffle, or repeat changes.
+- `art.version` changes when the source art id or processing recipe changes.
+- `art.hash` and top-level `art_hash` are the SHA-256 of the final processed RGB565 bytes.
+- If both `art.version` and `art.hash` are unchanged, do not fetch `art.url` again.
+- If `device.can_control_playback` is `false`, show state but avoid commands.
+- If `device.volume_control_supported` is `false`, do not send volume commands.
+- If `context.name` is null, use `context.fallback_name`.
 
 ## Listener Contract
 

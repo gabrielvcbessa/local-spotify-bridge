@@ -2,7 +2,7 @@ from io import BytesIO
 
 from PIL import Image
 
-from app.art import ArtOptions, display_ready_rgb565, image_to_rgb565
+from app.art import ArtOptions, art_version, bytes_hash, display_ready_rgb565, image_to_rgb565
 from app.main import rgb565_response
 
 
@@ -42,5 +42,7 @@ def test_rgb565_response_sets_knob_contract_headers():
     assert response.headers["X-Image-Height"] == "2"
     assert response.headers["X-Image-Format"] == "rgb565"
     assert response.headers["X-Image-Byte-Order"] == "lvgl-swap"
-    assert response.headers["X-Image-Version"] == "image-id"
+    assert response.headers["X-Image-Variant"] == "player-bg"
+    assert response.headers["X-Image-Version"] == art_version("image-id", ArtOptions(size=2, swap="lvgl"))
+    assert response.headers["X-Image-Hash"] == bytes_hash(b"1234")
     assert response.headers["Cache-Control"] == "public, max-age=86400"
