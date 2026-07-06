@@ -259,7 +259,7 @@ class SpotifyClient:
             for device in devices:
                 if str(device.get("name", "")).casefold() == target_name:
                     return device.get("id")
-        return target.device_id
+        return None
 
     async def playlists(self, limit: int = 50, offset: int = 0) -> Any:
         return await self.request("GET", "/me/playlists", params={"limit": limit, "offset": offset})

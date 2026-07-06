@@ -1062,16 +1062,16 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
 
     if command_type == "play_pause":
         if broker.current_state and broker.current_state.is_playing:
-            await spotify.pause(device_id=await command_device_id(spotify, command.get("device_id")))
+            await spotify.pause(device_id=explicit_device_id(command.get("device_id")))
         else:
-            await spotify.play(device_id=await command_device_id(spotify, command.get("device_id")))
+            await spotify.play(device_id=explicit_device_id(command.get("device_id")))
             follow_up_refresh = True
     elif command_type == "play":
         body = playback_body_from_mqtt(command)
         await spotify.play(body=body, device_id=await command_device_id(spotify, command.get("device_id")))
         follow_up_refresh = True
     elif command_type == "pause":
-        await spotify.pause(device_id=await command_device_id(spotify, command.get("device_id")))
+        await spotify.pause(device_id=explicit_device_id(command.get("device_id")))
     elif command_type == "next":
         await spotify.next_track(device_id=explicit_device_id(command.get("device_id")))
         broker.mark_forward_transition_expected()

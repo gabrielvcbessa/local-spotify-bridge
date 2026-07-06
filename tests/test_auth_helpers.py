@@ -3,6 +3,7 @@ import pytest
 
 from app.config import Settings
 from app.spotify import SpotifyClient
+from app.store import TargetDevice
 
 
 def test_authorize_url_contains_redirect_and_scopes():
@@ -118,3 +119,73 @@ async def test_playlist_name_falls_back_to_oembed_when_web_api_cannot_resolve():
         )
 
         assert await client.playlist_name("playlist-1") == "For My Hand (feat. Ed Sheeran) Radio"
+
+
+@pytest.mark.anyio
+async def test_resolve_target_device_id_ignores_stale_stored_id():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url == "https://accounts.spotify.com/api/token":
+            return httpx.Response(200, json={"access_token": "access", "expires_in": 3600})
+        if request.url == "https://api.spotify.com/v1/me/player/devices":
+            return httpx.Response(
+                200,
+                json={
+                    "devices": [
+                        {"id": "active-device", "name": "Gabriel's MacBook Air", "is_active": True},
+                    ]
+                },
+            )
+        raise AssertionError(f"Unexpected request: {request.url}")
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as http:
+        client = SpotifyClient(
+            Settings(
+                SPOTIFY_CLIENT_ID="client-id",
+                SPOTIFY_CLIENT_SECRET="client-secret",
+                SPOTIFY_REFRESH_TOKEN="refresh",
+                SPOTIFY_REDIRECT_URI="http://localhost:8090/v1/auth/callback",
+            ),
+            http=http,
+        )
+
+        resolved = await client.resolve_target_device_id(
+            target=TargetDevice(device_id="stale-device")
+        )
+
+    assert resolved is None
+
+
+@pytest.mark.anyio
+async def test_resolve_target_device_id_matches_target_name_when_id_is_stale():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url == "https://accounts.spotify.com/api/token":
+            return httpx.Response(200, json={"access_token": "access", "expires_in": 3600})
+        if request.url == "https://api.spotify.com/v1/me/player/devices":
+            return httpx.Response(
+                200,
+                json={
+                    "devices": [
+                        {"id": "active-device", "name": "Gabriel's MacBook Air", "is_active": True},
+                    ]
+                },
+            )
+        raise AssertionError(f"Unexpected request: {request.url}")
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as http:
+        client = SpotifyClient(
+            Settings(
+                SPOTIFY_CLIENT_ID="client-id",
+                SPOTIFY_CLIENT_SECRET="client-secret",
+                SPOTIFY_REFRESH_TOKEN="refresh",
+                SPOTIFY_REDIRECT_URI="http://localhost:8090/v1/auth/callback",
+            ),
+            http=http,
+        )
+
+        resolved = await client.resolve_target_device_id(
+            target=TargetDevice(device_id="stale-device", device_name="Gabriel's MacBook Air")
+        )
+
+    assert resolved == "active-device"
