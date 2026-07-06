@@ -18,6 +18,9 @@ class PlaybackSnapshot(BaseModel):
     device_id: str | None = None
     device_name: str | None = None
     device_type: str | None = None
+    device_is_active: bool | None = None
+    device_volume_percent: int | None = None
+    volume_control_supported: bool = False
     shuffle_state: bool | None = None
     repeat_state: str | None = None
     raw: dict[str, Any] = Field(default_factory=dict)
@@ -50,4 +53,3 @@ class SeekCommand(BaseModel):
 class VolumeCommand(BaseModel):
     volume_percent: int = Field(ge=0, le=100)
     device_id: str | None = None
-

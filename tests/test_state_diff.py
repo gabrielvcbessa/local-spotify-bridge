@@ -38,3 +38,10 @@ def test_large_progress_drift_is_meaningful():
         progress_drift_ms=5000,
     )
 
+
+def test_volume_capability_change_is_meaningful():
+    assert states_are_meaningfully_different(
+        snapshot(volume_control_supported=False),
+        snapshot(volume_control_supported=True),
+        progress_drift_ms=5000,
+    )

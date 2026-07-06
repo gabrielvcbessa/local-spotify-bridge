@@ -8,7 +8,14 @@ def test_normalize_current_playback_payload():
             "progress_ms": 1234,
             "shuffle_state": False,
             "repeat_state": "off",
-            "device": {"id": "dev1", "name": "Kitchen", "type": "Speaker"},
+            "device": {
+                "id": "dev1",
+                "name": "Kitchen",
+                "type": "Speaker",
+                "is_active": True,
+                "volume_percent": 42,
+                "supports_volume": True,
+            },
             "item": {
                 "id": "track1",
                 "uri": "spotify:track:track1",
@@ -29,4 +36,18 @@ def test_normalize_current_playback_payload():
     assert state.artists == ["Artist"]
     assert state.album_art_url == "https://example.test/art.jpg"
     assert state.device_name == "Kitchen"
+    assert state.device_is_active is True
+    assert state.device_volume_percent == 42
+    assert state.volume_control_supported is True
 
+
+def test_normalize_defaults_volume_control_to_false_when_unknown():
+    state = normalize_playback(
+        {
+            "is_playing": True,
+            "device": {"id": "dev1", "name": "Kitchen", "type": "Speaker"},
+            "item": {"id": "track1", "name": "Tune"},
+        }
+    )
+
+    assert state.volume_control_supported is False

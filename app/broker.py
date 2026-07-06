@@ -28,6 +28,9 @@ def states_are_meaningfully_different(
         "item_uri",
         "title",
         "device_id",
+        "device_is_active",
+        "device_volume_percent",
+        "volume_control_supported",
         "shuffle_state",
         "repeat_state",
     )
@@ -162,4 +165,3 @@ class StatePoller:
                 # Keep the local bridge alive if Spotify is briefly unavailable.
                 pass
             await asyncio.sleep(self._interval_seconds)
-

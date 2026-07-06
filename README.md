@@ -12,6 +12,7 @@ listeners.
 - `GET /v1/state?refresh=true` to actively query Spotify and update the cache.
 - `GET /v1/ws` as a WebSocket stream for local listeners.
 - MQTT retained playback updates on `local-spotify-bridge/playback` when enabled.
+- Active-device capability metadata, including whether Spotify says volume can be controlled.
 - Playback controls: play, pause, next, previous, seek, volume, and output-device transfer.
 - Library endpoints for devices, playlists, playlist songs, and saved songs.
 
@@ -146,7 +147,12 @@ ws://localhost:8090/v1/ws
 ```
 
 The bridge immediately sends a snapshot and then sends `playback.changed` messages only when the
-track, play state, output device, shuffle/repeat, or progress drift changes enough to matter.
+track, play state, output device, volume capability, device volume, shuffle/repeat, or progress drift
+changes enough to matter.
+
+Knobs should check `state.volume_control_supported` before sending `/v1/control/volume`. If it is
+`false`, the active Spotify output device either cannot be volume-controlled through Spotify or did
+not report that capability, so the knob should leave volume alone.
 
 MQTT clients subscribe to:
 
