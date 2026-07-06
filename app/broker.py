@@ -1,6 +1,7 @@
 import asyncio
 import json
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 
 from fastapi import WebSocket
 
@@ -51,6 +52,8 @@ class ConnectionBroker:
         self._mqtt_client = None
         self._version = 0
         self.current_state: PlaybackSnapshot | None = None
+        self.last_poll_at: str | None = None
+        self.last_spotify_error: str | None = None
         self._lock = asyncio.Lock()
 
     async def start(self) -> None:
@@ -88,6 +91,7 @@ class ConnectionBroker:
             self._websockets.discard(websocket)
 
     async def publish_if_changed(self, new_state: PlaybackSnapshot | None) -> bool:
+        self.mark_spotify_success()
         changed = states_are_meaningfully_different(
             self.current_state,
             new_state,
@@ -100,6 +104,14 @@ class ConnectionBroker:
         self._version += 1
         await self.publish("playback.changed", new_state)
         return True
+
+    def mark_spotify_success(self) -> None:
+        self.last_poll_at = datetime.now(UTC).isoformat()
+        self.last_spotify_error = None
+
+    def mark_spotify_error(self, exc: Exception) -> None:
+        self.last_poll_at = datetime.now(UTC).isoformat()
+        self.last_spotify_error = str(exc)
 
     async def publish(self, event: str, state: PlaybackSnapshot | None) -> None:
         envelope = StateEnvelope(event=event, state=state, version=self._version)
@@ -161,7 +173,8 @@ class StatePoller:
         while not self._stopped.is_set():
             try:
                 await self.poll_once()
-            except Exception:
+            except Exception as exc:
+                self._broker.mark_spotify_error(exc)
                 # Keep the local bridge alive if Spotify is briefly unavailable.
                 pass
             await asyncio.sleep(self._interval_seconds)

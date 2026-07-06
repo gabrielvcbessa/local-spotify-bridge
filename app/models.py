@@ -53,3 +53,31 @@ class SeekCommand(BaseModel):
 class VolumeCommand(BaseModel):
     volume_percent: int = Field(ge=0, le=100)
     device_id: str | None = None
+
+
+class TargetDeviceCommand(BaseModel):
+    device_id: str | None = None
+    device_name: str | None = None
+    transfer_playback: bool = False
+    play: bool = True
+
+
+class CompactLibraryItem(BaseModel):
+    id: str | None = None
+    uri: str | None = None
+    title: str
+    subtitle: str | None = None
+    image_url: str | None = None
+    duration_ms: int | None = None
+    track_count: int | None = None
+    owner_name: str | None = None
+    explicit: bool | None = None
+    playable: bool | None = None
+
+
+class CompactPage(BaseModel):
+    items: list[CompactLibraryItem]
+    limit: int
+    offset: int
+    total: int | None = None
+    next_offset: int | None = None

@@ -6,7 +6,8 @@ from urllib.parse import urlencode
 import httpx
 
 from .config import Settings
-from .models import PlaybackSnapshot
+from .models import CompactLibraryItem, CompactPage, PlaybackSnapshot
+from .store import RuntimeStore, TargetDevice
 
 
 class SpotifyNotConfigured(RuntimeError):
@@ -18,8 +19,14 @@ class SpotifyAuthNotConfigured(RuntimeError):
 
 
 class SpotifyClient:
-    def __init__(self, settings: Settings, http: httpx.AsyncClient | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        store: RuntimeStore | None = None,
+        http: httpx.AsyncClient | None = None,
+    ) -> None:
         self._settings = settings
+        self._store = store
         self._http = http or httpx.AsyncClient(timeout=20)
         self._access_token: str | None = None
         self._token_expires_at = 0.0
@@ -28,7 +35,8 @@ class SpotifyClient:
         await self._http.aclose()
 
     async def _token(self) -> str:
-        if not self._settings.spotify_configured:
+        refresh_token = self.refresh_token
+        if not self._settings.spotify_auth_configured or not refresh_token:
             raise SpotifyNotConfigured(
                 "Set SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, and SPOTIFY_REFRESH_TOKEN."
             )
@@ -44,7 +52,7 @@ class SpotifyClient:
             headers={"Authorization": f"Basic {auth}"},
             data={
                 "grant_type": "refresh_token",
-                "refresh_token": self._settings.spotify_refresh_token,
+                "refresh_token": refresh_token,
             },
         )
         response.raise_for_status()
@@ -52,6 +60,18 @@ class SpotifyClient:
         self._access_token = payload["access_token"]
         self._token_expires_at = time.time() + int(payload.get("expires_in", 3600))
         return self._access_token
+
+    @property
+    def refresh_token(self) -> str:
+        if self._store is not None:
+            stored = self._store.get_refresh_token()
+            if stored:
+                return stored
+        return self._settings.spotify_refresh_token
+
+    @property
+    def spotify_configured(self) -> bool:
+        return bool(self._settings.spotify_auth_configured and self.refresh_token)
 
     def authorize_url(self, state: str | None = None) -> str:
         if not self._settings.spotify_auth_configured:
@@ -85,7 +105,13 @@ class SpotifyClient:
             },
         )
         response.raise_for_status()
-        return response.json()
+        payload = response.json()
+        refresh_token = payload.get("refresh_token")
+        if refresh_token and self._store is not None:
+            self._store.set_refresh_token(refresh_token)
+            self._access_token = payload.get("access_token")
+            self._token_expires_at = time.time() + int(payload.get("expires_in", 3600))
+        return payload
 
     async def request(
         self,
@@ -156,6 +182,29 @@ class SpotifyClient:
     async def devices(self) -> Any:
         return await self.request("GET", "/me/player/devices")
 
+    async def resolve_target_device_id(
+        self,
+        explicit_device_id: str | None = None,
+        target: TargetDevice | None = None,
+    ) -> str | None:
+        if explicit_device_id:
+            return explicit_device_id
+        if target is None:
+            return None
+
+        payload = await self.devices()
+        devices = payload.get("devices", []) if isinstance(payload, dict) else []
+        if target.device_id:
+            for device in devices:
+                if device.get("id") == target.device_id:
+                    return target.device_id
+        if target.device_name:
+            target_name = target.device_name.casefold()
+            for device in devices:
+                if str(device.get("name", "")).casefold() == target_name:
+                    return device.get("id")
+        return target.device_id
+
     async def playlists(self, limit: int = 50, offset: int = 0) -> Any:
         return await self.request("GET", "/me/playlists", params={"limit": limit, "offset": offset})
 
@@ -168,6 +217,61 @@ class SpotifyClient:
 
     async def saved_tracks(self, limit: int = 50, offset: int = 0) -> Any:
         return await self.request("GET", "/me/tracks", params={"limit": limit, "offset": offset})
+
+    async def fetch_image(self, url: str) -> bytes:
+        response = await self._http.get(url)
+        response.raise_for_status()
+        return response.content
+
+
+def compact_playlists(payload: dict[str, Any]) -> CompactPage:
+    items = []
+    for playlist in payload.get("items", []):
+        images = playlist.get("images") or []
+        owner = playlist.get("owner") or {}
+        tracks = playlist.get("tracks") or {}
+        items.append(
+            CompactLibraryItem(
+                id=playlist.get("id"),
+                uri=playlist.get("uri"),
+                title=playlist.get("name") or "Untitled playlist",
+                subtitle=owner.get("display_name"),
+                image_url=images[0]["url"] if images else None,
+                track_count=tracks.get("total"),
+                owner_name=owner.get("display_name"),
+            )
+        )
+    return compact_page(payload, items)
+
+
+def compact_tracks(payload: dict[str, Any]) -> CompactPage:
+    items = []
+    for entry in payload.get("items", []):
+        track = entry.get("track") or entry
+        album = track.get("album") or {}
+        images = album.get("images") or []
+        artists = [artist.get("name", "") for artist in track.get("artists", []) if artist.get("name")]
+        items.append(
+            CompactLibraryItem(
+                id=track.get("id"),
+                uri=track.get("uri"),
+                title=track.get("name") or "Untitled track",
+                subtitle=", ".join(artists) if artists else album.get("name"),
+                image_url=images[0]["url"] if images else None,
+                duration_ms=track.get("duration_ms"),
+                explicit=track.get("explicit"),
+                playable=track.get("is_playable"),
+            )
+        )
+    return compact_page(payload, items)
+
+
+def compact_page(payload: dict[str, Any], items: list[CompactLibraryItem]) -> CompactPage:
+    limit = int(payload.get("limit") or len(items))
+    offset = int(payload.get("offset") or 0)
+    total = payload.get("total")
+    next_offset = offset + limit if payload.get("next") else None
+    return CompactPage(items=items, limit=limit, offset=offset, total=total, next_offset=next_offset)
 
 
 def normalize_playback(payload: dict[str, Any]) -> PlaybackSnapshot:

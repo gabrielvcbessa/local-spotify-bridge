@@ -13,6 +13,9 @@ listeners.
 - `GET /v1/ws` as a WebSocket stream for local listeners.
 - MQTT retained playback updates on `local-spotify-bridge/playback` when enabled.
 - Active-device capability metadata, including whether Spotify says volume can be controlled.
+- A persisted target Spotify device so knob commands can omit device IDs.
+- Compact library endpoints shaped for tiny clients.
+- Album art proxy/resizer endpoints, including RGB565 output.
 - Playback controls: play, pause, next, previous, seek, volume, and output-device transfer.
 - Library endpoints for devices, playlists, playlist songs, and saved songs.
 
@@ -30,9 +33,11 @@ Required variables:
 ```dotenv
 SPOTIFY_CLIENT_ID=...
 SPOTIFY_CLIENT_SECRET=...
-SPOTIFY_REFRESH_TOKEN=...
 SPOTIFY_REDIRECT_URI=http://localhost:8090/v1/auth/callback
 ```
+
+`SPOTIFY_REFRESH_TOKEN` is optional. The bridge can save it into its runtime store after
+`/v1/auth/callback`, and the Docker setup persists that store in the `bridge-data` volume.
 
 The refresh token needs scopes for the bridge features you want:
 
@@ -66,14 +71,8 @@ http://localhost:8090/v1/auth/login
 ```
 
 5. Copy `authorize_url` from the JSON response, open it in your browser, and approve Spotify access.
-6. Spotify redirects back to `/v1/auth/callback`; copy the returned `refresh_token`.
-7. Put it in `.env`:
-
-```dotenv
-SPOTIFY_REFRESH_TOKEN=...
-```
-
-8. Restart the bridge. `/health` should then show `spotify_configured: true`.
+6. Spotify redirects back to `/v1/auth/callback`; the bridge saves the returned `refresh_token`.
+7. `/health` should show `spotify_configured: true` without a restart.
 
 If port `8090` is busy, run with another host port and update the Spotify redirect URI to match:
 
@@ -123,7 +122,27 @@ curl http://localhost:8090/v1/devices
 curl http://localhost:8090/v1/playlists
 curl http://localhost:8090/v1/playlists/{playlist_id}/tracks
 curl http://localhost:8090/v1/saved-tracks
+curl http://localhost:8090/v1/library/playlists
+curl http://localhost:8090/v1/library/playlists/{playlist_id}/tracks
+curl http://localhost:8090/v1/library/saved-tracks
+curl "http://localhost:8090/v1/art/current.jpg?size=180"
 ```
+
+`/v1/playlists`, `/v1/playlists/{id}/tracks`, and `/v1/saved-tracks` remain raw Spotify pass-through
+endpoints. Prefer the `/v1/library/...` endpoints for knobs; they return compact items with `id`,
+`uri`, `title`, `subtitle`, `image_url`, `duration_ms`, `track_count`, and related small-client fields.
+
+Target device examples:
+
+```bash
+curl http://localhost:8090/v1/target
+curl -X POST http://localhost:8090/v1/target \
+  -H "content-type: application/json" \
+  -d '{"device_name":"Living Room Speaker","transfer_playback":true,"play":true}'
+```
+
+Once a target is set, control endpoints can omit `device_id`. The bridge resolves the stored target
+against Spotify's current device list, so it can recover when Spotify changes device IDs.
 
 Control examples:
 
@@ -137,6 +156,20 @@ curl -X POST http://localhost:8090/v1/control/transfer \
   -H "content-type: application/json" \
   -d '{"device_id":"...","play":true}'
 ```
+
+After every successful command, the bridge immediately refreshes playback state from Spotify and
+publishes changed state through WebSocket and MQTT.
+
+Artwork endpoints:
+
+```text
+GET /v1/art/current.jpg?size=180
+GET /v1/art/proxy.jpg?url={spotify_image_url}&size=180
+GET /v1/art/{spotify_image_id}.rgb565?size=180
+```
+
+The JPEG endpoints return resized square JPEGs. The RGB565 endpoint returns raw big-endian RGB565
+bytes for the requested square size, suitable for small displays that do not want to decode JPEGs.
 
 ## Listener Contract
 
