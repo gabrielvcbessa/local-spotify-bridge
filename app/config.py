@@ -43,6 +43,11 @@ class Settings(BaseSettings):
         default=0.5,
         alias="SPOTIFY_RATE_LIMIT_RETRY_AFTER_PADDING_SECONDS",
     )
+    spotify_preload_next_enabled: bool = Field(default=True, alias="SPOTIFY_PRELOAD_NEXT_ENABLED")
+    command_followup_refresh_delays_seconds: str = Field(
+        default="0.5,1.5",
+        alias="COMMAND_FOLLOWUP_REFRESH_DELAYS_SECONDS",
+    )
     state_change_progress_drift_ms: int = Field(default=5000, alias="STATE_CHANGE_PROGRESS_DRIFT_MS")
 
     mqtt_enabled: bool = Field(default=False, alias="MQTT_ENABLED")
@@ -75,6 +80,21 @@ class Settings(BaseSettings):
     @property
     def spotify_scope_list(self) -> list[str]:
         return [scope for scope in self.spotify_scopes.split() if scope]
+
+    @property
+    def command_followup_refresh_delays(self) -> tuple[float, ...]:
+        delays: list[float] = []
+        for raw_delay in self.command_followup_refresh_delays_seconds.split(","):
+            raw_delay = raw_delay.strip()
+            if not raw_delay:
+                continue
+            try:
+                delay = float(raw_delay)
+            except ValueError:
+                continue
+            if delay > 0:
+                delays.append(delay)
+        return tuple(delays)
 
 
 @lru_cache

@@ -165,7 +165,25 @@ class SpotifyClient:
         payload = await self.request("GET", "/me/player", expected_statuses={200, 204})
         if payload is None:
             return None
-        return normalize_playback(payload)
+        state = normalize_playback(payload)
+        if self._settings.spotify_preload_next_enabled:
+            state.next_track = await self.next_queue_track()
+        return state
+
+    async def queue(self) -> Any:
+        return await self.request("GET", "/me/player/queue")
+
+    async def next_queue_track(self) -> dict[str, Any] | None:
+        try:
+            payload = await self.queue()
+        except httpx.HTTPStatusError:
+            return None
+        queue = payload.get("queue", []) if isinstance(payload, dict) else []
+        for item in queue:
+            preview = compact_track_preview(item)
+            if preview is not None:
+                return preview
+        return None
 
     async def play(self, body: dict[str, Any] | None = None, device_id: str | None = None) -> None:
         params = {"device_id": device_id} if device_id else None
@@ -338,6 +356,28 @@ def compact_tracks(payload: dict[str, Any]) -> CompactPage:
             )
         )
     return compact_page(payload, items)
+
+
+def compact_track_preview(track: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(track, dict) or track.get("type") != "track":
+        return None
+
+    album = track.get("album") or {}
+    images = album.get("images") or []
+    album_art_url = images[0]["url"] if images else None
+    artists = [artist.get("name", "") for artist in track.get("artists", []) if artist.get("name")]
+    album_art_id = spotify_image_id(album_art_url)
+    return {
+        "id": track.get("id"),
+        "uri": track.get("uri"),
+        "title": track.get("name"),
+        "artists": artists,
+        "artist_text": ", ".join(artists),
+        "album": album.get("name"),
+        "album_art_url": album_art_url,
+        "album_art_id": album_art_id,
+        "duration_ms": track.get("duration_ms"),
+    }
 
 
 def compact_page(payload: dict[str, Any], items: list[CompactLibraryItem]) -> CompactPage:

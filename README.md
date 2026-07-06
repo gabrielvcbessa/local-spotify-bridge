@@ -143,6 +143,8 @@ SPOTIFY_RATE_LIMIT_SOFT_RATIO=0.8
 SPOTIFY_RATE_LIMIT_BACKOFF_MULTIPLIER=1.25
 SPOTIFY_RATE_LIMIT_MAX_POLL_INTERVAL_SECONDS=60
 SPOTIFY_RATE_LIMIT_RETRY_AFTER_PADDING_SECONDS=0.5
+SPOTIFY_PRELOAD_NEXT_ENABLED=true
+COMMAND_FOLLOWUP_REFRESH_DELAYS_SECONDS=0.5,1.5
 ```
 
 `/health` includes `rate_limit` diagnostics with the current rolling-window request count, adaptive
@@ -197,7 +199,16 @@ curl -X POST http://localhost:8090/v1/control/transfer \
 ```
 
 After every successful command, the bridge immediately refreshes playback state from Spotify and
-publishes changed state through WebSocket and MQTT.
+publishes changed state through WebSocket and MQTT. Track/source-changing commands such as `play`,
+`next`, `previous`, and `transfer` also schedule short follow-up refreshes so Spotify Connect has
+time to settle before the bridge publishes the final track/device state. Tune those follow-up delays
+with `COMMAND_FOLLOWUP_REFRESH_DELAYS_SECONDS`.
+
+When `SPOTIFY_PRELOAD_NEXT_ENABLED=true`, playback refreshes also make a best-effort request to
+Spotify's queue endpoint and expose the first upcoming track as `next_track` in `/v1/state`,
+`/v1/knob/snapshot`, WebSocket, and MQTT state payloads. This is advisory preload data: queue,
+shuffle, repeat, and Connect device behavior can change before the next command lands, so firmware
+should treat `next_track` as optional.
 
 Artwork endpoints:
 
@@ -293,6 +304,27 @@ It returns one compact render payload with deterministic hashes:
     "artist_text": "Artist 1, Artist 2",
     "album": "Album name"
   },
+  "next_track": {
+    "id": "next-spotify-track-id",
+    "uri": "spotify:track:...",
+    "title": "Next song name",
+    "artists": ["Artist 3"],
+    "artist_text": "Artist 3",
+    "album": "Next album name",
+    "duration_ms": 181000,
+    "album_art_id": "next-spotify-image-id",
+    "album_art_url": "https://i.scdn.co/image/...",
+    "art": {
+      "id": "next-spotify-image-id",
+      "version": "sha256-of-source-art-and-processing-options",
+      "url": "http://bridge.local:8090/v1/art/next-spotify-image-id.rgb565?size=180&swap=lvgl&variant=player-bg",
+      "width": 180,
+      "height": 180,
+      "format": "rgb565",
+      "byte_order": "rotary-lvgl",
+      "content_length": 64800
+    }
+  },
   "context": {
     "type": "playlist",
     "uri": "spotify:playlist:...",
@@ -340,13 +372,15 @@ It returns one compact render payload with deterministic hashes:
 Firmware behavior:
 
 - `payload_hash` changes when anything render-relevant changes.
-- `playback_hash` changes when track text, context id/name/display name, play state, device, volume,
-  shuffle, or repeat changes.
+- `playback_hash` changes when track text, optional `next_track`, context id/name/display name, play
+  state, device, volume, shuffle, or repeat changes.
 - `art.version` changes when the source art id or processing recipe changes.
 - `art.hash` and top-level `art_hash` are the SHA-256 of the final processed RGB565 bytes.
 - If both `art.version` and `art.hash` are unchanged, do not fetch `art.url` again.
 - If `device.can_control_playback` is `false`, show state but avoid commands.
 - If `device.volume_control_supported` is `false`, do not send volume commands.
+- `next_track` is optional advisory preload data from Spotify's queue endpoint. It may be `null` and
+  should not be treated as a promise that the next command will play that exact track.
 - Use `context.display_name` for UI text. The server resolves playlist names when possible and falls
   back to album name for non-playlist or unresolved contexts.
 

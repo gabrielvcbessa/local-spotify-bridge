@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 from io import BytesIO
 from typing import Annotated, Any
@@ -267,7 +268,7 @@ async def set_target(
             )
         if command.transfer_playback and resolved_device_id:
             await client.transfer_playback(resolved_device_id, command.play)
-            await refresh_and_publish(client)
+            await refresh_and_publish(client, follow_up_delays=settings.command_followup_refresh_delays)
     except Exception as exc:
         raise translate_spotify_error(exc) from exc
 
@@ -294,7 +295,7 @@ async def play(command: PlaybackCommand, client: Annotated[SpotifyClient, Depend
     try:
         device_id = await command_device_id(client, command.device_id)
         await client.play(body=body, device_id=device_id)
-        await refresh_and_publish(client)
+        await refresh_and_publish(client, follow_up_delays=settings.command_followup_refresh_delays)
     except Exception as exc:
         raise translate_spotify_error(exc) from exc
 
@@ -318,7 +319,7 @@ async def next_track(
 ):
     try:
         await client.next_track(device_id=await command_device_id(client, device_id))
-        await refresh_and_publish(client)
+        await refresh_and_publish(client, follow_up_delays=settings.command_followup_refresh_delays)
     except Exception as exc:
         raise translate_spotify_error(exc) from exc
 
@@ -330,7 +331,7 @@ async def previous_track(
 ):
     try:
         await client.previous_track(device_id=await command_device_id(client, device_id))
-        await refresh_and_publish(client)
+        await refresh_and_publish(client, follow_up_delays=settings.command_followup_refresh_delays)
     except Exception as exc:
         raise translate_spotify_error(exc) from exc
 
@@ -343,7 +344,7 @@ async def transfer_playback(
     try:
         await client.transfer_playback(command.device_id, command.play)
         store.set_target_device(TargetDevice(device_id=command.device_id))
-        await refresh_and_publish(client)
+        await refresh_and_publish(client, follow_up_delays=settings.command_followup_refresh_delays)
     except Exception as exc:
         raise translate_spotify_error(exc) from exc
 
@@ -654,8 +655,22 @@ async def command_device_id(client: SpotifyClient, explicit_device_id: str | Non
     return await client.resolve_target_device_id(explicit_device_id, store.get_target_device())
 
 
-async def refresh_and_publish(client: SpotifyClient) -> None:
+async def refresh_and_publish(
+    client: SpotifyClient,
+    *,
+    follow_up_delays: tuple[float, ...] = (),
+) -> None:
     await broker.publish_if_changed(await client.current_playback())
+    for delay in follow_up_delays:
+        asyncio.create_task(delayed_refresh_and_publish(client, delay))
+
+
+async def delayed_refresh_and_publish(client: SpotifyClient, delay_seconds: float) -> None:
+    await asyncio.sleep(delay_seconds)
+    try:
+        await broker.publish_if_changed(await client.current_playback())
+    except Exception as exc:
+        broker.mark_spotify_error(exc)
 
 
 async def mqtt_knob_snapshot(version: int, state) -> dict[str, Any]:
@@ -950,21 +965,26 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
     command_type = command.get("type")
     if not isinstance(command_type, str):
         raise ValueError("MQTT command requires a string 'type'.")
+    follow_up_refresh = False
 
     if command_type == "play_pause":
         if broker.current_state and broker.current_state.is_playing:
             await spotify.pause(device_id=await command_device_id(spotify, command.get("device_id")))
         else:
             await spotify.play(device_id=await command_device_id(spotify, command.get("device_id")))
+            follow_up_refresh = True
     elif command_type == "play":
         body = playback_body_from_mqtt(command)
         await spotify.play(body=body, device_id=await command_device_id(spotify, command.get("device_id")))
+        follow_up_refresh = True
     elif command_type == "pause":
         await spotify.pause(device_id=await command_device_id(spotify, command.get("device_id")))
     elif command_type == "next":
         await spotify.next_track(device_id=await command_device_id(spotify, command.get("device_id")))
+        follow_up_refresh = True
     elif command_type == "previous":
         await spotify.previous_track(device_id=await command_device_id(spotify, command.get("device_id")))
+        follow_up_refresh = True
     elif command_type == "volume_set":
         volume_percent = command.get("volume_percent")
         if not isinstance(volume_percent, int):
@@ -987,6 +1007,7 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
             body={"context_uri": context_uri},
             device_id=await command_device_id(spotify, command.get("device_id")),
         )
+        follow_up_refresh = True
     elif command_type == "transfer":
         device_id = command.get("device_id")
         if not isinstance(device_id, str) or not device_id:
@@ -995,6 +1016,7 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
         await spotify.transfer_playback(device_id, bool(play))
         if command.get("set_target"):
             store.set_target_device(TargetDevice(device_id=device_id))
+        follow_up_refresh = True
     elif command_type == "shuffle_set":
         enabled = command.get("enabled")
         if not isinstance(enabled, bool):
@@ -1008,10 +1030,14 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
     elif command_type == "play_library_item":
         body = play_library_item_body(command)
         await spotify.play(body=body, device_id=await command_device_id(spotify, command.get("device_id")))
+        follow_up_refresh = True
     else:
         raise ValueError(f"Unsupported MQTT command type: {command_type}")
 
-    await refresh_and_publish(spotify)
+    await refresh_and_publish(
+        spotify,
+        follow_up_delays=settings.command_followup_refresh_delays if follow_up_refresh else (),
+    )
     await publish_mqtt_status()
     return {"state_version": broker.version, "published_state": True}
 

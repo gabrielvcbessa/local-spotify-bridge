@@ -47,6 +47,7 @@ def knob_snapshot(
             "progress_ms": None,
             "duration_ms": None,
             "track": None,
+            "next_track": None,
             "context": None,
             "device": None,
             "modes": {"shuffle": None, "repeat": None},
@@ -83,6 +84,7 @@ def knob_snapshot(
     }
     modes = {"shuffle": state.shuffle_state, "repeat": state.repeat_state}
     art = knob_art_payload(state, base_url, art_options)
+    next_track = knob_next_track_payload(state, base_url, art_options)
 
     playback_hash = stable_hash(
         {
@@ -90,6 +92,7 @@ def knob_snapshot(
             "progress_ms": state.progress_ms,
             "duration_ms": state.duration_ms,
             "track": track,
+            "next_track": next_track,
             "context": context,
             "device": device,
             "modes": modes,
@@ -109,6 +112,7 @@ def knob_snapshot(
         "progress_ms": state.progress_ms,
         "duration_ms": state.duration_ms,
         "track": track,
+        "next_track": next_track,
         "context": context,
         "device": device,
         "modes": modes,
@@ -119,6 +123,35 @@ def knob_snapshot(
             "updated_at_ms": updated_at_ms,
         },
     }
+
+
+def knob_next_track_payload(
+    state: PlaybackSnapshot,
+    base_url: str,
+    options: ArtOptions,
+) -> dict[str, Any] | None:
+    if state.next_track is None:
+        return None
+
+    next_track = dict(state.next_track)
+    album_art_id = next_track.get("album_art_id")
+    if isinstance(album_art_id, str) and album_art_id:
+        next_track["art"] = {
+            "id": album_art_id,
+            "version": art_version(album_art_id, options),
+            "url": (
+                f"{base_url.rstrip('/')}/v1/art/{album_art_id}.rgb565"
+                f"?size={options.size}&swap=lvgl&variant={options.variant}"
+            ),
+            "width": options.size,
+            "height": options.size,
+            "format": "rgb565",
+            "byte_order": options.byte_order,
+            "content_length": options.size * options.size * 2,
+        }
+    else:
+        next_track["art"] = None
+    return next_track
 
 
 def knob_art_payload(

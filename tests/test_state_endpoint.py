@@ -52,6 +52,17 @@ def test_knob_snapshot_shapes_render_contract_and_hashes(monkeypatch):
         volume_control_supported=True,
         shuffle_state=False,
         repeat_state="off",
+        next_track={
+            "id": "next-track-id",
+            "uri": "spotify:track:next-track-id",
+            "title": "Next song",
+            "artists": ["Artist 3"],
+            "artist_text": "Artist 3",
+            "album": "Next album",
+            "album_art_url": "https://i.scdn.co/image/ab67616d0000b273next",
+            "album_art_id": "ab67616d0000b273next",
+            "duration_ms": 181000,
+        },
         raw={"context": {"type": "playlist", "uri": "spotify:playlist:playlist-id"}},
     )
     try:
@@ -69,6 +80,20 @@ def test_knob_snapshot_shapes_render_contract_and_hashes(monkeypatch):
     assert payload["art_hash"] == bytes_hash(art_payload)
     assert payload["is_playing"] is True
     assert payload["track"]["artist_text"] == "Artist 1, Artist 2"
+    assert payload["next_track"]["title"] == "Next song"
+    assert payload["next_track"]["art"] == {
+        "id": "ab67616d0000b273next",
+        "version": art_version(
+            "ab67616d0000b273next",
+            ArtOptions(size=180, swap="lvgl", variant="player-bg"),
+        ),
+        "url": "http://bridge.local:8090/v1/art/ab67616d0000b273next.rgb565?size=180&swap=lvgl&variant=player-bg",
+        "width": 180,
+        "height": 180,
+        "format": "rgb565",
+        "byte_order": "rotary-lvgl",
+        "content_length": 64800,
+    }
     assert payload["context"] == {
         "type": "playlist",
         "uri": "spotify:playlist:playlist-id",
