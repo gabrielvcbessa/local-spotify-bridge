@@ -145,4 +145,5 @@ def status_payload(
             "resolved": bool(target_device_id and active_device_id == target_device_id),
         },
     }
-    return envelope(version=version, payload=payload)
+    hash_payload = {key: value for key, value in payload.items() if key != "last_poll_at"}
+    return envelope(version=version, payload=payload, hash_payload=hash_payload)

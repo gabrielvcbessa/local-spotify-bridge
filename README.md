@@ -438,6 +438,13 @@ The retained `config` message advertises the active topics, HTTP base URL, art r
 supported commands/requests. The legacy retained `local-spotify-bridge/playback` envelope is still
 published for existing clients.
 
+Retained MQTT publishes are content-deduped per topic. If `state`, `config`, `status`, `devices`,
+or library payloads have the same semantic hash as the last payload on that topic, the bridge skips
+the publish so sleeping or low-power consumers are not woken for duplicate data. Volatile fields such
+as `version`, `updated_at_ms`, and successful `last_poll_at` updates do not force a publish by
+themselves. Non-retained `command_result` and `request_result` messages still publish for each
+command/request.
+
 MQTT command examples:
 
 ```json

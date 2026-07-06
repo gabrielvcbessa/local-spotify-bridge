@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -62,6 +63,7 @@ class ConnectionBroker:
         self.last_spotify_error: str | None = None
         self.last_mqtt_availability: dict[str, Any] | None = None
         self.last_mqtt_availability_at: str | None = None
+        self._mqtt_payload_fingerprints: dict[str, str] = {}
         self._lock = asyncio.Lock()
 
     def set_mqtt_snapshot_factory(
@@ -100,6 +102,7 @@ class ConnectionBroker:
         client.connect(self._settings.mqtt_host, self._settings.mqtt_port, 60)
         client.loop_start()
         self._mqtt_client = client
+        self._mqtt_payload_fingerprints = {}
         await self.publish_mqtt_config()
 
     async def stop(self) -> None:
@@ -173,25 +176,19 @@ class ConnectionBroker:
 
         if self._mqtt_client is not None:
             topic = f"{self._settings.mqtt_topic_prefix}/playback"
-            self._mqtt_client.publish(topic, text, qos=self._settings.mqtt_qos, retain=True)
+            self._publish_mqtt_json(topic, payload, retain=True)
             if self._mqtt_snapshot_factory is not None:
                 snapshot = await self._mqtt_snapshot_factory(self._version, state)
-                self._mqtt_client.publish(
+                self._publish_mqtt_json(
                     self.mqtt_topic("state"),
-                    json.dumps(snapshot),
-                    qos=self._settings.mqtt_qos,
                     retain=True,
+                    payload=snapshot,
                 )
 
     async def publish_mqtt_config(self) -> None:
         if self._mqtt_client is None or self._mqtt_config_factory is None:
             return
-        self._mqtt_client.publish(
-            self.mqtt_topic("config"),
-            json.dumps(self._mqtt_config_factory()),
-            qos=self._settings.mqtt_qos,
-            retain=True,
-        )
+        self._publish_mqtt_json(self.mqtt_topic("config"), self._mqtt_config_factory(), retain=True)
 
     def mqtt_topic(self, leaf: str) -> str:
         prefix = self._settings.mqtt_knob_topic_prefix.strip("/")
@@ -284,12 +281,44 @@ class ConnectionBroker:
     async def publish_mqtt_retained(self, topic_key: str, payload: dict[str, Any]) -> None:
         if self._mqtt_client is None:
             return
-        self._mqtt_client.publish(
-            self.mqtt_topic(topic_key),
-            json.dumps(payload),
-            qos=self._settings.mqtt_qos,
-            retain=True,
-        )
+        self._publish_mqtt_json(self.mqtt_topic(topic_key), payload, retain=True)
+
+    def _publish_mqtt_json(self, topic: str, payload: dict[str, Any], *, retain: bool) -> bool:
+        if self._mqtt_client is None:
+            return False
+
+        text = json.dumps(payload)
+        if retain:
+            fingerprint = mqtt_payload_fingerprint(payload)
+            if self._mqtt_payload_fingerprints.get(topic) == fingerprint:
+                return False
+            self._mqtt_payload_fingerprints[topic] = fingerprint
+
+        self._mqtt_client.publish(topic, text, qos=self._settings.mqtt_qos, retain=retain)
+        return True
+
+
+def mqtt_payload_fingerprint(payload: dict[str, Any]) -> str:
+    if isinstance(payload.get("payload_hash"), str):
+        return f"payload_hash:{payload['payload_hash']}"
+    if isinstance(payload.get("hash"), str):
+        return f"hash:{payload['hash']}"
+
+    normalized = strip_mqtt_volatile_fields(payload)
+    encoded = json.dumps(normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def strip_mqtt_volatile_fields(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: strip_mqtt_volatile_fields(item)
+            for key, item in value.items()
+            if key not in {"updated_at_ms", "version"}
+        }
+    if isinstance(value, list):
+        return [strip_mqtt_volatile_fields(item) for item in value]
+    return value
 
 
 class StatePoller:

@@ -2,8 +2,9 @@ import json
 
 import pytest
 
-from app.broker import ConnectionBroker
+from app.broker import ConnectionBroker, mqtt_payload_fingerprint
 from app.config import Settings
+from app.knob_mqtt import status_payload
 from app.models import PlaybackSnapshot
 
 
@@ -73,6 +74,92 @@ async def test_mqtt_config_is_retained():
             True,
         )
     ]
+
+
+@pytest.mark.anyio
+async def test_mqtt_config_skips_duplicate_payloads():
+    broker = ConnectionBroker(
+        Settings(
+            MQTT_ENABLED=True,
+            MQTT_KNOB_TOPIC_PREFIX="rotary",
+            MQTT_KNOB_DEVICE_ID="kitchen",
+            MQTT_QOS=1,
+        )
+    )
+    mqtt = FakeMqttClient()
+    broker._mqtt_client = mqtt
+    broker.set_mqtt_config_factory(lambda: {"topics": broker.mqtt_topics()})
+
+    await broker.publish_mqtt_config()
+    await broker.publish_mqtt_config()
+
+    assert len(mqtt.published) == 1
+
+
+@pytest.mark.anyio
+async def test_mqtt_retained_publish_skips_duplicate_payloads_by_topic():
+    broker = ConnectionBroker(
+        Settings(
+            MQTT_ENABLED=True,
+            MQTT_KNOB_TOPIC_PREFIX="rotary",
+            MQTT_KNOB_DEVICE_ID="kitchen",
+            MQTT_QOS=1,
+        )
+    )
+    mqtt = FakeMqttClient()
+    broker._mqtt_client = mqtt
+
+    await broker.publish_mqtt_retained("status", {"hash": "same", "updated_at_ms": 1})
+    await broker.publish_mqtt_retained("status", {"hash": "same", "updated_at_ms": 2})
+    await broker.publish_mqtt_retained("devices", {"hash": "same", "updated_at_ms": 2})
+    await broker.publish_mqtt_retained("status", {"hash": "different", "updated_at_ms": 3})
+
+    assert [entry[0] for entry in mqtt.published] == [
+        "rotary/kitchen/status",
+        "rotary/kitchen/devices",
+        "rotary/kitchen/status",
+    ]
+
+
+def test_mqtt_payload_fingerprint_ignores_volatile_fields_without_hashes():
+    first = {
+        "version": 1,
+        "updated_at_ms": 100,
+        "server": {"updated_at_ms": 100},
+        "value": "same",
+    }
+    second = {
+        "version": 2,
+        "updated_at_ms": 200,
+        "server": {"updated_at_ms": 200},
+        "value": "same",
+    }
+
+    assert mqtt_payload_fingerprint(first) == mqtt_payload_fingerprint(second)
+
+
+def test_mqtt_status_hash_ignores_successful_poll_timestamp():
+    first = status_payload(
+        version=1,
+        spotify_configured=True,
+        last_poll_at="2026-07-06T10:00:00+00:00",
+        last_error=None,
+        current_state=None,
+        target=None,
+        mqtt_connected=True,
+    )
+    second = status_payload(
+        version=1,
+        spotify_configured=True,
+        last_poll_at="2026-07-06T10:01:00+00:00",
+        last_error=None,
+        current_state=None,
+        target=None,
+        mqtt_connected=True,
+    )
+
+    assert first["last_poll_at"] != second["last_poll_at"]
+    assert first["hash"] == second["hash"]
 
 
 @pytest.mark.anyio
