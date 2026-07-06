@@ -319,7 +319,7 @@ async def next_track(
     client: Annotated[SpotifyClient, Depends(spotify_client)] = spotify,
 ):
     try:
-        await client.next_track(device_id=await command_device_id(client, device_id))
+        await client.next_track(device_id=explicit_device_id(device_id))
         broker.mark_forward_transition_expected()
         await refresh_and_publish(client, follow_up_delays=settings.command_followup_refresh_delays)
     except Exception as exc:
@@ -332,7 +332,7 @@ async def previous_track(
     client: Annotated[SpotifyClient, Depends(spotify_client)] = spotify,
 ):
     try:
-        await client.previous_track(device_id=await command_device_id(client, device_id))
+        await client.previous_track(device_id=explicit_device_id(device_id))
         await refresh_and_publish(client, follow_up_delays=settings.command_followup_refresh_delays)
     except Exception as exc:
         raise translate_spotify_error(exc) from exc
@@ -655,6 +655,10 @@ async def spotify_art_rgb565(
 
 async def command_device_id(client: SpotifyClient, explicit_device_id: str | None) -> str | None:
     return await client.resolve_target_device_id(explicit_device_id, store.get_target_device())
+
+
+def explicit_device_id(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None
 
 
 async def refresh_and_publish(
@@ -1004,11 +1008,11 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
     elif command_type == "pause":
         await spotify.pause(device_id=await command_device_id(spotify, command.get("device_id")))
     elif command_type == "next":
-        await spotify.next_track(device_id=await command_device_id(spotify, command.get("device_id")))
+        await spotify.next_track(device_id=explicit_device_id(command.get("device_id")))
         broker.mark_forward_transition_expected()
         follow_up_refresh = True
     elif command_type == "previous":
-        await spotify.previous_track(device_id=await command_device_id(spotify, command.get("device_id")))
+        await spotify.previous_track(device_id=explicit_device_id(command.get("device_id")))
         follow_up_refresh = True
     elif command_type == "volume_set":
         volume_percent = command.get("volume_percent")

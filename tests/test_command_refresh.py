@@ -13,6 +13,17 @@ class FakeSpotifyClient:
         return PlaybackSnapshot(title=f"Song {self.calls}")
 
 
+class FakeCommandSpotifyClient:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str | None]] = []
+
+    async def next_track(self, device_id: str | None = None) -> None:
+        self.calls.append(("next", device_id))
+
+    async def previous_track(self, device_id: str | None = None) -> None:
+        self.calls.append(("previous", device_id))
+
+
 @pytest.mark.asyncio
 async def test_refresh_and_publish_schedules_follow_up_refreshes(monkeypatch):
     client = FakeSpotifyClient()
@@ -35,3 +46,30 @@ async def test_refresh_and_publish_schedules_follow_up_refreshes(monkeypatch):
 
     assert published == ["Song 1"]
     assert len(scheduled) == 2
+
+
+@pytest.mark.asyncio
+async def test_mqtt_next_previous_do_not_use_implicit_target_device(monkeypatch):
+    client = FakeCommandSpotifyClient()
+    refreshes = []
+
+    async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
+        refreshes.append(tuple(follow_up_delays))
+
+    async def fake_publish_mqtt_status():
+        return None
+
+    monkeypatch.setattr(main, "spotify", client)
+    monkeypatch.setattr(main, "refresh_and_publish", fake_refresh_and_publish)
+    monkeypatch.setattr(main, "publish_mqtt_status", fake_publish_mqtt_status)
+
+    await main.handle_mqtt_command({"type": "next"})
+    await main.handle_mqtt_command({"type": "previous"})
+    await main.handle_mqtt_command({"type": "next", "device_id": "speaker-1"})
+
+    assert client.calls == [
+        ("next", None),
+        ("previous", None),
+        ("next", "speaker-1"),
+    ]
+    assert len(refreshes) == 3
