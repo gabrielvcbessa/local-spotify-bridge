@@ -15,12 +15,14 @@ class PlaylistNameCacheEntry:
     fetched_at: float
     expires_at: float
     failed: bool = False
+    error: str | None = None
 
 
 class PlaylistNameCache:
     def __init__(self) -> None:
         self._entries: dict[str, PlaylistNameCacheEntry] = {}
         self._in_flight: set[str] = set()
+        self._last_playlist_id: str | None = None
 
     def get(self, playlist_id: str) -> str | None:
         entry = self._entries.get(playlist_id)
@@ -48,15 +50,17 @@ class PlaylistNameCache:
             return None
 
         self._in_flight.add(playlist_id)
+        self._last_playlist_id = playlist_id
         now = time.time()
         try:
             name = await resolver(playlist_id)
-        except Exception:
+        except Exception as exc:
             self._entries[playlist_id] = PlaylistNameCacheEntry(
                 name=None,
                 fetched_at=now,
                 expires_at=now + PLAYLIST_FAILURE_TTL_SECONDS,
                 failed=True,
+                error=type(exc).__name__,
             )
             raise
         finally:
@@ -68,6 +72,7 @@ class PlaylistNameCache:
                 fetched_at=now,
                 expires_at=now + PLAYLIST_FAILURE_TTL_SECONDS,
                 failed=True,
+                error="empty_name",
             )
             return None
 
@@ -78,6 +83,25 @@ class PlaylistNameCache:
             failed=False,
         )
         return name
+
+    def status(self) -> dict[str, str | float | bool | None]:
+        if self._last_playlist_id is None:
+            return {
+                "last_playlist_id": None,
+                "cached": False,
+                "failed": False,
+                "error": None,
+                "expires_at": None,
+            }
+
+        entry = self._entries.get(self._last_playlist_id)
+        return {
+            "last_playlist_id": self._last_playlist_id,
+            "cached": bool(entry and entry.name and not entry.failed and entry.expires_at > time.time()),
+            "failed": bool(entry and entry.failed and entry.expires_at > time.time()),
+            "error": entry.error if entry else None,
+            "expires_at": entry.expires_at if entry else None,
+        }
 
 
 def playback_context_parts(state: PlaybackSnapshot) -> dict[str, str | None]:

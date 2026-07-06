@@ -100,6 +100,7 @@ async def health() -> dict[str, Any]:
         "active_device_name": broker.current_state.device_name if broker.current_state else None,
         "target_device_name": target.device_name if target else None,
         "target_device_id": target.device_id if target else None,
+        "playlist_name_cache": playlist_name_cache.status(),
     }
 
 

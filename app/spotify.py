@@ -223,9 +223,33 @@ class SpotifyClient:
         )
 
     async def playlist_name(self, playlist_id: str) -> str | None:
-        payload = await self.playlist(playlist_id)
+        try:
+            payload = await self.playlist(playlist_id)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code not in {403, 404}:
+                raise
+            return await self.playlist_name_from_user_library(playlist_id)
         name = payload.get("name") if isinstance(payload, dict) else None
-        return name if isinstance(name, str) and name else None
+        if isinstance(name, str) and name:
+            return name
+        return await self.playlist_name_from_user_library(playlist_id)
+
+    async def playlist_name_from_user_library(self, playlist_id: str, max_pages: int = 20) -> str | None:
+        offset = 0
+        limit = 50
+        for _ in range(max_pages):
+            payload = await self.playlists(limit=limit, offset=offset)
+            items = payload.get("items", []) if isinstance(payload, dict) else []
+            for item in items:
+                if not isinstance(item, dict) or item.get("id") != playlist_id:
+                    continue
+                name = item.get("name")
+                return name if isinstance(name, str) and name else None
+
+            if not isinstance(payload, dict) or not payload.get("next") or len(items) < limit:
+                return None
+            offset += limit
+        return None
 
     async def saved_tracks(self, limit: int = 50, offset: int = 0) -> Any:
         return await self.request("GET", "/me/tracks", params={"limit": limit, "offset": offset})

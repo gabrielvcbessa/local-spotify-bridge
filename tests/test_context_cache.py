@@ -65,3 +65,6 @@ async def test_playlist_name_cache_failure_is_temporarily_cached():
 
     assert await cache.resolve_once("abc123", resolver) is None
     assert calls == 1
+    assert cache.status()["last_playlist_id"] == "abc123"
+    assert cache.status()["failed"] is True
+    assert cache.status()["error"] == "RuntimeError"

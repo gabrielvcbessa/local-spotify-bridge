@@ -55,3 +55,38 @@ async def test_exchange_code_returns_refresh_token():
         token = await client.exchange_code("abc123")
 
     assert token["refresh_token"] == "refresh"
+
+
+@pytest.mark.anyio
+async def test_playlist_name_falls_back_to_user_library_when_direct_lookup_fails():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url == "https://accounts.spotify.com/api/token":
+            return httpx.Response(200, json={"access_token": "access", "expires_in": 3600})
+        if request.url == "https://api.spotify.com/v1/playlists/playlist-1?fields=id%2Cname%2Curi":
+            return httpx.Response(404, json={"error": {"status": 404}})
+        if request.url == "https://api.spotify.com/v1/me/playlists?limit=50&offset=0":
+            return httpx.Response(
+                200,
+                json={
+                    "items": [
+                        {"id": "other", "name": "Other Playlist"},
+                        {"id": "playlist-1", "name": "Actual Playlist"},
+                    ],
+                    "next": None,
+                },
+            )
+        raise AssertionError(f"Unexpected request: {request.url}")
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as http:
+        client = SpotifyClient(
+            Settings(
+                SPOTIFY_CLIENT_ID="client-id",
+                SPOTIFY_CLIENT_SECRET="client-secret",
+                SPOTIFY_REFRESH_TOKEN="refresh",
+                SPOTIFY_REDIRECT_URI="http://localhost:8090/v1/auth/callback",
+            ),
+            http=http,
+        )
+
+        assert await client.playlist_name("playlist-1") == "Actual Playlist"

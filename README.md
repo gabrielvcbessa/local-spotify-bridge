@@ -303,6 +303,10 @@ Firmware behavior:
 Playlist context names are cached by playlist id for 24 hours. If the name is not cached, the snapshot
 returns immediately with `display_name` set to `fallback_name` and triggers a resolve when possible.
 Failures are cached briefly for 5 minutes to avoid retry storms; `/v1/knob/snapshot` still succeeds.
+Playlist names are not returned by the OAuth callback. The bridge resolves them after auth with the
+Spotify Web API, first through `GET /v1/playlists/{playlist_id}` and then, if needed, by scanning the
+user playlist library. `/health` includes `playlist_name_cache` so you can see the last playlist id,
+whether a name is cached, and whether the latest lookup failed.
 
 ## Listener Contract
 
