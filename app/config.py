@@ -20,6 +20,7 @@ class Settings(BaseSettings):
         alias="SPOTIFY_SCOPES",
     )
     data_path: str = Field(default="data/bridge-state.json", alias="DATA_PATH")
+    public_base_url: str = Field(default="", alias="PUBLIC_BASE_URL")
 
     host: str = Field(default="0.0.0.0", alias="HOST")
     port: int = Field(default=8090, alias="PORT")

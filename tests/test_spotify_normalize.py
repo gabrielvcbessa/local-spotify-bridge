@@ -25,7 +25,11 @@ def test_normalize_current_playback_payload():
                 "artists": [{"name": "Artist"}],
                 "album": {
                     "name": "Album",
-                    "images": [{"url": "https://example.test/art.jpg"}],
+                    "images": [
+                        {
+                            "url": "https://i.scdn.co/image/ab67616d0000b273adfc1ac5836f96adac580271"
+                        }
+                    ],
                 },
             },
         }
@@ -34,7 +38,9 @@ def test_normalize_current_playback_payload():
     assert state.is_playing is True
     assert state.title == "Tune"
     assert state.artists == ["Artist"]
-    assert state.album_art_url == "https://example.test/art.jpg"
+    assert state.album_art_url == "https://i.scdn.co/image/ab67616d0000b273adfc1ac5836f96adac580271"
+    assert state.album_art_id == "ab67616d0000b273adfc1ac5836f96adac580271"
+    assert state.knob_art_version == "ab67616d0000b273adfc1ac5836f96adac580271"
     assert state.device_name == "Kitchen"
     assert state.device_is_active is True
     assert state.device_volume_percent == 42

@@ -14,6 +14,9 @@ class PlaybackSnapshot(BaseModel):
     artists: list[str] = Field(default_factory=list)
     album: str | None = None
     album_art_url: str | None = None
+    album_art_id: str | None = None
+    knob_art_url: str | None = None
+    knob_art_version: str | None = None
     duration_ms: int | None = None
     device_id: str | None = None
     device_name: str | None = None

@@ -2,10 +2,11 @@ from contextlib import asynccontextmanager
 from io import BytesIO
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, Response
 from PIL import Image
 
+from .art import ArtCache, ArtOptions, display_ready_rgb565, image_to_rgb565
 from .broker import ConnectionBroker, StatePoller
 from .config import get_settings
 from .models import PlaybackCommand, SeekCommand, TargetDeviceCommand, TransferPlaybackCommand, VolumeCommand
@@ -24,6 +25,7 @@ store = RuntimeStore(settings)
 spotify = SpotifyClient(settings, store)
 broker = ConnectionBroker(settings)
 poller = StatePoller(spotify.current_playback, broker, settings.poll_interval_seconds)
+art_cache = ArtCache(settings)
 
 
 @asynccontextmanager
@@ -142,6 +144,7 @@ async def auth_callback(
 
 @app.get("/v1/state")
 async def get_state(
+    request: Request,
     refresh: bool = False,
     client: Annotated[SpotifyClient, Depends(spotify_client)] = spotify,
     state_broker: Annotated[ConnectionBroker, Depends(bridge_broker)] = broker,
@@ -153,9 +156,7 @@ async def get_state(
             raise translate_spotify_error(exc) from exc
     return {
         "version": state_broker.version,
-        "state": state_broker.current_state.model_dump(mode="json")
-        if state_broker.current_state
-        else None,
+        "state": state_payload(state_broker.current_state, request) if state_broker.current_state else None,
     }
 
 
@@ -394,6 +395,37 @@ async def current_art_jpg(
     return await resized_image_response(client, broker.current_state.album_art_url, size, "JPEG")
 
 
+@app.get("/v1/art/current.rgb565")
+async def current_art_rgb565(
+    size: int = Query(default=180, ge=32, le=640),
+    swap: str = Query(default="lvgl", pattern="^(lvgl|none)$"),
+    theme: str = Query(default="dark", pattern="^(dark|none)$"),
+    darken: float = Query(default=0.22, ge=0.0, le=0.85),
+    saturation: float = Query(default=1.08, ge=0.0, le=3.0),
+    contrast: float = Query(default=1.05, ge=0.0, le=3.0),
+    blur: float = Query(default=0.0, ge=0.0, le=6.0),
+    circle: bool = False,
+    client: Annotated[SpotifyClient, Depends(spotify_client)] = spotify,
+):
+    if not broker.current_state or not broker.current_state.album_art_url:
+        raise HTTPException(status_code=404, detail="No current album art available.")
+    image_id = broker.current_state.album_art_id or broker.current_state.knob_art_version
+    if not image_id:
+        raise HTTPException(status_code=404, detail="Current album art has no cacheable image id.")
+    options = ArtOptions(
+        size=size,
+        theme=theme,
+        swap=swap,
+        darken=darken,
+        saturation=saturation,
+        contrast=contrast,
+        blur=blur,
+        circle=circle,
+    )
+    payload = await cached_rgb565_art(client, image_id, broker.current_state.album_art_url, options)
+    return rgb565_response(payload, options, image_id)
+
+
 @app.get("/v1/art/proxy.jpg")
 async def proxy_art_jpg(
     url: str,
@@ -407,11 +439,28 @@ async def proxy_art_jpg(
 async def spotify_art_rgb565(
     spotify_image_id: str,
     size: int = Query(default=180, ge=32, le=640),
+    swap: str = Query(default="lvgl", pattern="^(lvgl|none)$"),
+    theme: str = Query(default="dark", pattern="^(dark|none)$"),
+    darken: float = Query(default=0.22, ge=0.0, le=0.85),
+    saturation: float = Query(default=1.08, ge=0.0, le=3.0),
+    contrast: float = Query(default=1.05, ge=0.0, le=3.0),
+    blur: float = Query(default=0.0, ge=0.0, le=6.0),
+    circle: bool = False,
     client: Annotated[SpotifyClient, Depends(spotify_client)] = spotify,
 ):
     url = f"https://i.scdn.co/image/{spotify_image_id}"
-    image_bytes = await resized_image_bytes(client, url, size, "RGB565")
-    return Response(content=image_bytes, media_type="application/octet-stream")
+    options = ArtOptions(
+        size=size,
+        theme=theme,
+        swap=swap,
+        darken=darken,
+        saturation=saturation,
+        contrast=contrast,
+        blur=blur,
+        circle=circle,
+    )
+    image_bytes = await cached_rgb565_art(client, spotify_image_id, url, options)
+    return rgb565_response(image_bytes, options, spotify_image_id)
 
 
 async def command_device_id(client: SpotifyClient, explicit_device_id: str | None) -> str | None:
@@ -420,6 +469,53 @@ async def command_device_id(client: SpotifyClient, explicit_device_id: str | Non
 
 async def refresh_and_publish(client: SpotifyClient) -> None:
     await broker.publish_if_changed(await client.current_playback())
+
+
+def state_payload(state, request: Request) -> dict[str, Any]:
+    payload = state.model_dump(mode="json")
+    if state.album_art_id:
+        payload["knob_art_url"] = f"{public_base_url(request)}/v1/art/current.rgb565?size=180&swap=lvgl"
+        payload["knob_art_version"] = state.album_art_id
+    return payload
+
+
+def public_base_url(request: Request) -> str:
+    if settings.public_base_url:
+        return settings.public_base_url.rstrip("/")
+    return str(request.base_url).rstrip("/")
+
+
+async def cached_rgb565_art(
+    client: SpotifyClient,
+    image_id: str,
+    url: str,
+    options: ArtOptions,
+) -> bytes:
+    cached = art_cache.get(image_id, options)
+    if cached is not None:
+        return cached
+    try:
+        raw = await client.fetch_image(url)
+    except Exception as exc:
+        raise translate_spotify_error(exc) from exc
+    payload = display_ready_rgb565(raw, options)
+    art_cache.set(image_id, options, payload)
+    return payload
+
+
+def rgb565_response(payload: bytes, options: ArtOptions, image_id: str) -> Response:
+    return Response(
+        content=payload,
+        media_type="application/octet-stream",
+        headers={
+            "X-Image-Width": str(options.size),
+            "X-Image-Height": str(options.size),
+            "X-Image-Format": "rgb565",
+            "X-Image-Byte-Order": options.byte_order,
+            "X-Image-Version": image_id,
+            "Cache-Control": "public, max-age=86400",
+        },
+    )
 
 
 async def resized_image_response(
@@ -457,16 +553,3 @@ async def resized_image_bytes(
         output = BytesIO()
         canvas.save(output, format="JPEG", quality=85, optimize=True)
         return output.getvalue()
-
-
-def image_to_rgb565(image: Image.Image) -> bytes:
-    rgb = image.convert("RGB").tobytes()
-    pixels = bytearray()
-    for offset in range(0, len(rgb), 3):
-        red = rgb[offset]
-        green = rgb[offset + 1]
-        blue = rgb[offset + 2]
-        value = ((red & 0xF8) << 8) | ((green & 0xFC) << 3) | (blue >> 3)
-        pixels.append((value >> 8) & 0xFF)
-        pixels.append(value & 0xFF)
-    return bytes(pixels)

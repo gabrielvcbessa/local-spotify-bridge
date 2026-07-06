@@ -34,6 +34,7 @@ Required variables:
 SPOTIFY_CLIENT_ID=...
 SPOTIFY_CLIENT_SECRET=...
 SPOTIFY_REDIRECT_URI=http://localhost:8090/v1/auth/callback
+PUBLIC_BASE_URL=http://YOUR_SERVER_IP:8090
 ```
 
 `SPOTIFY_REFRESH_TOKEN` is optional. The bridge can save it into its runtime store after
@@ -126,6 +127,7 @@ curl http://localhost:8090/v1/library/playlists
 curl http://localhost:8090/v1/library/playlists/{playlist_id}/tracks
 curl http://localhost:8090/v1/library/saved-tracks
 curl "http://localhost:8090/v1/art/current.jpg?size=180"
+curl -o current.rgb565 "http://localhost:8090/v1/art/current.rgb565?size=180&swap=lvgl"
 ```
 
 `/v1/playlists`, `/v1/playlists/{id}/tracks`, and `/v1/saved-tracks` remain raw Spotify pass-through
@@ -164,12 +166,47 @@ Artwork endpoints:
 
 ```text
 GET /v1/art/current.jpg?size=180
+GET /v1/art/current.rgb565?size=180&swap=lvgl
 GET /v1/art/proxy.jpg?url={spotify_image_url}&size=180
-GET /v1/art/{spotify_image_id}.rgb565?size=180
+GET /v1/art/{spotify_image_id}.rgb565?size=180&swap=lvgl
 ```
 
-The JPEG endpoints return resized square JPEGs. The RGB565 endpoint returns raw big-endian RGB565
-bytes for the requested square size, suitable for small displays that do not want to decode JPEGs.
+The JPEG endpoints return resized square JPEGs. The RGB565 endpoints return display-ready square
+raw RGB565 bytes after center crop, resize, light contrast/saturation tuning, and a baked dark
+overlay. `swap=lvgl` returns LVGL-friendly swapped byte order. `swap=none` returns big-endian RGB565.
+
+The knob-oriented endpoint is:
+
+```text
+GET /v1/art/current.rgb565?size=180&swap=lvgl
+```
+
+Response headers:
+
+```text
+Content-Type: application/octet-stream
+X-Image-Width: 180
+X-Image-Height: 180
+X-Image-Format: rgb565
+X-Image-Byte-Order: lvgl-swap
+Cache-Control: public, max-age=86400
+```
+
+For `size=180`, the payload is exactly `180 * 180 * 2 = 64800` bytes. Processed artwork is cached
+under the bridge data directory by Spotify image id and transform options.
+
+`GET /v1/state` includes these artwork fields when current album art is available:
+
+```json
+{
+  "album_art_url": "https://i.scdn.co/image/...",
+  "album_art_id": "ab67616d0000b273adfc1ac5836f96adac580271",
+  "knob_art_url": "http://YOUR_SERVER_IP:8090/v1/art/current.rgb565?size=180&swap=lvgl",
+  "knob_art_version": "ab67616d0000b273adfc1ac5836f96adac580271"
+}
+```
+
+The knob should compare `knob_art_version`; if unchanged, it can skip fetching art again.
 
 ## Listener Contract
 

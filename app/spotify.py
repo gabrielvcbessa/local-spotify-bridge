@@ -278,6 +278,8 @@ def normalize_playback(payload: dict[str, Any]) -> PlaybackSnapshot:
     item = payload.get("item") or {}
     album = item.get("album") or {}
     images = album.get("images") or []
+    album_art_url = images[0]["url"] if images else None
+    album_art_id = spotify_image_id(album_art_url)
     device = payload.get("device") or {}
     artists = [artist.get("name", "") for artist in item.get("artists", []) if artist.get("name")]
 
@@ -290,7 +292,9 @@ def normalize_playback(payload: dict[str, Any]) -> PlaybackSnapshot:
         title=item.get("name"),
         artists=artists,
         album=album.get("name"),
-        album_art_url=images[0]["url"] if images else None,
+        album_art_url=album_art_url,
+        album_art_id=album_art_id,
+        knob_art_version=album_art_id,
         duration_ms=item.get("duration_ms"),
         device_id=device.get("id"),
         device_name=device.get("name"),
@@ -302,3 +306,9 @@ def normalize_playback(payload: dict[str, Any]) -> PlaybackSnapshot:
         repeat_state=payload.get("repeat_state"),
         raw=payload,
     )
+
+
+def spotify_image_id(url: str | None) -> str | None:
+    if not url:
+        return None
+    return url.rstrip("/").split("/")[-1] or None
