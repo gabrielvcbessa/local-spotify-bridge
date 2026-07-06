@@ -33,6 +33,9 @@ playlist_name_cache = PlaylistNameCache()
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    broker.set_mqtt_snapshot_factory(mqtt_knob_snapshot)
+    broker.set_mqtt_config_factory(mqtt_knob_config)
+    broker.set_mqtt_command_handler(handle_mqtt_command)
     await broker.start()
     if spotify.spotify_configured:
         poller.start()
@@ -101,6 +104,9 @@ async def health() -> dict[str, Any]:
         "target_device_name": target.device_name if target else None,
         "target_device_id": target.device_id if target else None,
         "playlist_name_cache": playlist_name_cache.status(),
+        "mqtt_topics": broker.mqtt_topics() if settings.mqtt_enabled else None,
+        "mqtt_availability": broker.last_mqtt_availability if settings.mqtt_enabled else None,
+        "mqtt_availability_at": broker.last_mqtt_availability_at if settings.mqtt_enabled else None,
     }
 
 
@@ -559,6 +565,150 @@ async def command_device_id(client: SpotifyClient, explicit_device_id: str | Non
 
 async def refresh_and_publish(client: SpotifyClient) -> None:
     await broker.publish_if_changed(await client.current_playback())
+
+
+async def mqtt_knob_snapshot(version: int, state) -> dict[str, Any]:
+    art_options = mqtt_art_options()
+    context_name = await resolved_context_name(spotify, state, resolve_inline=False)
+    art_hash = None
+    if state and state.album_art_url:
+        image_id = state.album_art_id or state.knob_art_version
+        if image_id:
+            try:
+                art_payload = await cached_rgb565_art(spotify, image_id, state.album_art_url, art_options)
+                art_hash = bytes_hash(art_payload)
+            except Exception as exc:
+                broker.mark_spotify_error(exc)
+
+    return knob_snapshot(
+        version=version,
+        state=state,
+        base_url=mqtt_base_url(),
+        spotify_configured=spotify.spotify_configured,
+        art_options=art_options,
+        art_hash=art_hash,
+        context_name=context_name,
+    )
+
+
+def mqtt_knob_config() -> dict[str, Any]:
+    art_options = mqtt_art_options()
+    topics = broker.mqtt_topics()
+    return {
+        "device_id": settings.mqtt_knob_device_id,
+        "qos": settings.mqtt_qos,
+        "retain": {"state": True, "config": True, "command_result": False},
+        "topics": topics,
+        "http": {
+            "base_url": mqtt_base_url(),
+            "snapshot_url": f"{mqtt_base_url()}/v1/knob/snapshot",
+            "art_url": (
+                f"{mqtt_base_url()}/v1/knob/art/current.rgb565"
+                f"?size={art_options.size}&swap={art_options.swap}&variant={art_options.variant}"
+            ),
+        },
+        "art": {
+            "size": art_options.size,
+            "format": "rgb565",
+            "swap": art_options.swap,
+            "variant": art_options.variant,
+            "byte_order": art_options.byte_order,
+        },
+        "commands": [
+            "play_pause",
+            "play",
+            "pause",
+            "next",
+            "previous",
+            "volume_set",
+            "seek",
+            "select_source",
+            "transfer",
+        ],
+    }
+
+
+def mqtt_art_options() -> ArtOptions:
+    return ArtOptions(
+        size=settings.mqtt_knob_art_size,
+        swap=settings.mqtt_knob_art_swap,
+        variant=settings.mqtt_knob_art_variant,
+    )
+
+
+def mqtt_base_url() -> str:
+    if settings.public_base_url:
+        return settings.public_base_url.rstrip("/")
+    host = "localhost" if settings.host in {"0.0.0.0", "::"} else settings.host
+    return f"http://{host}:{settings.port}"
+
+
+async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
+    command_type = command.get("type")
+    if not isinstance(command_type, str):
+        raise ValueError("MQTT command requires a string 'type'.")
+
+    if command_type == "play_pause":
+        if broker.current_state and broker.current_state.is_playing:
+            await spotify.pause(device_id=await command_device_id(spotify, command.get("device_id")))
+        else:
+            await spotify.play(device_id=await command_device_id(spotify, command.get("device_id")))
+    elif command_type == "play":
+        body = playback_body_from_mqtt(command)
+        await spotify.play(body=body, device_id=await command_device_id(spotify, command.get("device_id")))
+    elif command_type == "pause":
+        await spotify.pause(device_id=await command_device_id(spotify, command.get("device_id")))
+    elif command_type == "next":
+        await spotify.next_track(device_id=await command_device_id(spotify, command.get("device_id")))
+    elif command_type == "previous":
+        await spotify.previous_track(device_id=await command_device_id(spotify, command.get("device_id")))
+    elif command_type == "volume_set":
+        volume_percent = command.get("volume_percent")
+        if not isinstance(volume_percent, int):
+            raise ValueError("volume_set requires integer volume_percent.")
+        if not 0 <= volume_percent <= 100:
+            raise ValueError("volume_percent must be between 0 and 100.")
+        if broker.current_state and not broker.current_state.volume_control_supported:
+            return {"ignored": True, "reason": "volume_control_unsupported"}
+        await spotify.set_volume(volume_percent, await command_device_id(spotify, command.get("device_id")))
+    elif command_type == "seek":
+        position_ms = command.get("position_ms")
+        if not isinstance(position_ms, int) or position_ms < 0:
+            raise ValueError("seek requires non-negative integer position_ms.")
+        await spotify.seek(position_ms, await command_device_id(spotify, command.get("device_id")))
+    elif command_type == "select_source":
+        context_uri = command.get("uri") or command.get("context_uri")
+        if not isinstance(context_uri, str) or not context_uri:
+            raise ValueError("select_source requires uri or context_uri.")
+        await spotify.play(
+            body={"context_uri": context_uri},
+            device_id=await command_device_id(spotify, command.get("device_id")),
+        )
+    elif command_type == "transfer":
+        device_id = command.get("device_id")
+        if not isinstance(device_id, str) or not device_id:
+            raise ValueError("transfer requires device_id.")
+        play = command.get("play", True)
+        await spotify.transfer_playback(device_id, bool(play))
+    else:
+        raise ValueError(f"Unsupported MQTT command type: {command_type}")
+
+    await refresh_and_publish(spotify)
+    return {"state_version": broker.version}
+
+
+def playback_body_from_mqtt(command: dict[str, Any]) -> dict[str, Any]:
+    body: dict[str, Any] = {}
+    for source, target in (
+        ("context_uri", "context_uri"),
+        ("uri", "context_uri"),
+        ("uris", "uris"),
+        ("offset", "offset"),
+        ("position_ms", "position_ms"),
+    ):
+        if command.get(source) is not None:
+            body[target] = command[source]
+    return body
 
 
 async def resolved_context_name(

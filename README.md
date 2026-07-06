@@ -11,7 +11,7 @@ listeners.
 - `GET /v1/state` for passive or active clients that want the cached state.
 - `GET /v1/state?refresh=true` to actively query Spotify and update the cache.
 - `GET /v1/ws` as a WebSocket stream for local listeners.
-- MQTT retained playback updates on `local-spotify-bridge/playback` when enabled.
+- MQTT retained knob snapshots/config and inbound knob commands when enabled.
 - Active-device capability metadata, including whether Spotify says volume can be controlled.
 - A persisted target Spotify device so knob commands can omit device IDs.
 - Compact library endpoints shaped for tiny clients.
@@ -112,6 +112,17 @@ With the included test MQTT broker:
 
 ```bash
 MQTT_ENABLED=true docker compose --profile mqtt up --build
+```
+
+Useful MQTT settings:
+
+```dotenv
+MQTT_ENABLED=true
+MQTT_HOST=localhost
+MQTT_PORT=1883
+MQTT_KNOB_TOPIC_PREFIX=rotary
+MQTT_KNOB_DEVICE_ID=kitchen
+MQTT_QOS=1
 ```
 
 ## REST API
@@ -324,11 +335,44 @@ Knobs should check `state.volume_control_supported` before sending `/v1/control/
 `false`, the active Spotify output device either cannot be volume-controlled through Spotify or did
 not report that capability, so the knob should leave volume alone.
 
-MQTT clients subscribe to:
+MQTT can be used as the lightweight transport for knobs and downstream displays. When enabled, the
+bridge publishes the knob snapshot contract to retained state and config topics:
 
 ```text
-local-spotify-bridge/playback
+rotary/<device_id>/state          retained, bridge -> knob
+rotary/<device_id>/config         retained, bridge -> knob
+rotary/<device_id>/command        non-retained, knob -> bridge
+rotary/<device_id>/command_result non-retained, bridge -> knob
+rotary/<device_id>/availability   retained, knob -> bridge
 ```
 
-The MQTT message is retained so a knob that wakes up can get the latest state immediately, update
-itself, and go back to sleep.
+The default `<device_id>` is `knob`; set `MQTT_KNOB_DEVICE_ID=kitchen` or another stable name for a
+specific device. `/health` includes `mqtt_topics` when MQTT is enabled.
+
+The retained `state` message uses the same fields as `/v1/knob/snapshot`, including `payload_hash`,
+`playback_hash`, `art_hash`, `context.display_name`, device capability flags, and processed art URL.
+The bridge computes the art byte hash from the cached RGB565 payload when possible; if image fetching
+fails, state still publishes and the art endpoint remains the source of truth for image headers.
+
+The retained `config` message advertises the active topics, HTTP base URL, art recipe, QoS, and
+supported commands. The legacy retained `local-spotify-bridge/playback` envelope is still published
+for existing clients.
+
+MQTT command examples:
+
+```json
+{ "type": "play_pause" }
+{ "type": "next" }
+{ "type": "previous" }
+{ "type": "volume_set", "volume_percent": 42 }
+{ "type": "seek", "position_ms": 30000 }
+{ "type": "select_source", "uri": "spotify:playlist:..." }
+```
+
+After a successful command, the bridge refreshes Spotify state and publishes an updated retained
+snapshot. `volume_set` is ignored with a successful command result when the current device reports
+`volume_control_supported: false`.
+
+MQTT retained messages do not wake a deeply sleeping Wi-Fi device, but wake-up is fast: the knob
+connects, receives retained `config` and `state`, redraws only if hashes changed, and can go back to
+sleep after inactivity.

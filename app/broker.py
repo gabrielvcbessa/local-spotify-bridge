@@ -2,6 +2,7 @@ import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import WebSocket
 
@@ -50,11 +51,32 @@ class ConnectionBroker:
         self._settings = settings
         self._websockets: set[WebSocket] = set()
         self._mqtt_client = None
+        self._mqtt_loop: asyncio.AbstractEventLoop | None = None
+        self._mqtt_snapshot_factory: Callable[[int, PlaybackSnapshot | None], Awaitable[dict[str, Any]]] | None = None
+        self._mqtt_config_factory: Callable[[], dict[str, Any]] | None = None
+        self._mqtt_command_handler: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None = None
         self._version = 0
         self.current_state: PlaybackSnapshot | None = None
         self.last_poll_at: str | None = None
         self.last_spotify_error: str | None = None
+        self.last_mqtt_availability: dict[str, Any] | None = None
+        self.last_mqtt_availability_at: str | None = None
         self._lock = asyncio.Lock()
+
+    def set_mqtt_snapshot_factory(
+        self,
+        factory: Callable[[int, PlaybackSnapshot | None], Awaitable[dict[str, Any]]],
+    ) -> None:
+        self._mqtt_snapshot_factory = factory
+
+    def set_mqtt_config_factory(self, factory: Callable[[], dict[str, Any]]) -> None:
+        self._mqtt_config_factory = factory
+
+    def set_mqtt_command_handler(
+        self,
+        handler: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]],
+    ) -> None:
+        self._mqtt_command_handler = handler
 
     async def start(self) -> None:
         if not self._settings.mqtt_enabled:
@@ -62,18 +84,23 @@ class ConnectionBroker:
         if mqtt is None:
             raise RuntimeError("paho-mqtt is required when MQTT_ENABLED=true.")
 
+        self._mqtt_loop = asyncio.get_running_loop()
         client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
         if self._settings.mqtt_username:
             client.username_pw_set(self._settings.mqtt_username, self._settings.mqtt_password or None)
+        client.on_connect = self._on_mqtt_connect
+        client.on_message = self._on_mqtt_message
         client.connect(self._settings.mqtt_host, self._settings.mqtt_port, 60)
         client.loop_start()
         self._mqtt_client = client
+        await self.publish_mqtt_config()
 
     async def stop(self) -> None:
         if self._mqtt_client is not None:
             self._mqtt_client.loop_stop()
             self._mqtt_client.disconnect()
             self._mqtt_client = None
+            self._mqtt_loop = None
 
     @property
     def version(self) -> int:
@@ -139,7 +166,84 @@ class ConnectionBroker:
 
         if self._mqtt_client is not None:
             topic = f"{self._settings.mqtt_topic_prefix}/playback"
-            self._mqtt_client.publish(topic, text, qos=1, retain=True)
+            self._mqtt_client.publish(topic, text, qos=self._settings.mqtt_qos, retain=True)
+            if self._mqtt_snapshot_factory is not None:
+                snapshot = await self._mqtt_snapshot_factory(self._version, state)
+                self._mqtt_client.publish(
+                    self.mqtt_topic("state"),
+                    json.dumps(snapshot),
+                    qos=self._settings.mqtt_qos,
+                    retain=True,
+                )
+
+    async def publish_mqtt_config(self) -> None:
+        if self._mqtt_client is None or self._mqtt_config_factory is None:
+            return
+        self._mqtt_client.publish(
+            self.mqtt_topic("config"),
+            json.dumps(self._mqtt_config_factory()),
+            qos=self._settings.mqtt_qos,
+            retain=True,
+        )
+
+    def mqtt_topic(self, leaf: str) -> str:
+        prefix = self._settings.mqtt_knob_topic_prefix.strip("/")
+        device_id = self._settings.mqtt_knob_device_id.strip("/")
+        return f"{prefix}/{device_id}/{leaf}"
+
+    def mqtt_topics(self) -> dict[str, str]:
+        return {
+            "legacy_playback": f"{self._settings.mqtt_topic_prefix}/playback",
+            "state": self.mqtt_topic("state"),
+            "config": self.mqtt_topic("config"),
+            "command": self.mqtt_topic("command"),
+            "command_result": self.mqtt_topic("command_result"),
+            "availability": self.mqtt_topic("availability"),
+        }
+
+    def _on_mqtt_connect(self, client, _, __, reason_code, ___) -> None:
+        if reason_code != 0:
+            self.last_spotify_error = f"MQTT connect failed: {reason_code}"
+            return
+        client.subscribe(self.mqtt_topic("command"), qos=self._settings.mqtt_qos)
+        client.subscribe(self.mqtt_topic("availability"), qos=self._settings.mqtt_qos)
+
+    def _on_mqtt_message(self, _, __, message) -> None:
+        if self._mqtt_loop is None:
+            return
+        payload = bytes(message.payload).decode("utf-8")
+        self._mqtt_loop.call_soon_threadsafe(
+            lambda: asyncio.create_task(self._handle_mqtt_message(message.topic, payload))
+        )
+
+    async def _handle_mqtt_message(self, topic: str, payload: str) -> None:
+        if topic == self.mqtt_topic("availability"):
+            self.last_mqtt_availability_at = datetime.now(UTC).isoformat()
+            try:
+                availability = json.loads(payload)
+                self.last_mqtt_availability = availability if isinstance(availability, dict) else {"value": availability}
+            except json.JSONDecodeError:
+                self.last_mqtt_availability = {"value": payload}
+            return
+        if topic != self.mqtt_topic("command") or self._mqtt_command_handler is None:
+            return
+
+        try:
+            command = json.loads(payload)
+            if not isinstance(command, dict):
+                raise ValueError("MQTT command payload must be a JSON object.")
+            result = await self._mqtt_command_handler(command)
+            response = {"ok": True, "command": command.get("type"), "result": result}
+        except Exception as exc:
+            response = {"ok": False, "error": str(exc)}
+
+        if self._mqtt_client is not None:
+            self._mqtt_client.publish(
+                self.mqtt_topic("command_result"),
+                json.dumps(response),
+                qos=self._settings.mqtt_qos,
+                retain=False,
+            )
 
 
 class StatePoller:
