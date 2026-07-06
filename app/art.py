@@ -3,6 +3,7 @@ import hashlib
 import json
 from io import BytesIO
 from pathlib import Path
+import time
 
 from PIL import Image, ImageEnhance, ImageFilter
 
@@ -43,6 +44,12 @@ class ArtOptions:
 class ArtCache:
     def __init__(self, settings: Settings) -> None:
         self._root = Path(settings.data_path).parent / "art-cache"
+        self._max_age_seconds = settings.art_cache_max_age_seconds
+        self._max_bytes = settings.art_cache_max_bytes
+        self._memory_max_bytes = settings.art_memory_cache_max_bytes
+        self._memory_max_age_seconds = settings.art_memory_cache_max_age_seconds
+        self._memory: dict[str, tuple[float, bytes]] = {}
+        self._memory_bytes = 0
 
     def path_for(self, image_id: str, options: ArtOptions) -> Path:
         name = (
@@ -59,18 +66,152 @@ class ArtCache:
         )
         return self._root / name
 
+    def memory_key(self, image_id: str, options: ArtOptions) -> str:
+        return str(self.path_for(image_id, options).name)
+
     def get(self, image_id: str, options: ArtOptions) -> bytes | None:
+        key = self.memory_key(image_id, options)
+        cached_memory = self._memory_get(key)
+        if cached_memory is not None:
+            return cached_memory
+
         path = self.path_for(image_id, options)
         if not path.exists():
             return None
-        return path.read_bytes()
+        if self._is_expired(path):
+            path.unlink(missing_ok=True)
+            return None
+        path.touch()
+        payload = path.read_bytes()
+        self._memory_set(key, payload)
+        return payload
 
     def set(self, image_id: str, options: ArtOptions, payload: bytes) -> None:
+        self._memory_set(self.memory_key(image_id, options), payload)
         path = self.path_for(image_id, options)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = path.with_suffix(".tmp")
         tmp_path.write_bytes(payload)
         tmp_path.replace(path)
+        self.prune()
+
+    def prune(self) -> None:
+        if not self._root.exists():
+            return
+
+        now = time.time()
+        entries: list[tuple[float, int, Path]] = []
+        total_bytes = 0
+        for path in self._root.glob("*.rgb565"):
+            try:
+                stat = path.stat()
+            except FileNotFoundError:
+                continue
+
+            if self._max_age_seconds >= 0 and now - stat.st_mtime > self._max_age_seconds:
+                path.unlink(missing_ok=True)
+                continue
+
+            total_bytes += stat.st_size
+            entries.append((stat.st_mtime, stat.st_size, path))
+
+        if self._max_bytes <= 0:
+            for _, _, path in entries:
+                path.unlink(missing_ok=True)
+            return
+
+        for _, size, path in sorted(entries):
+            if total_bytes <= self._max_bytes:
+                break
+            path.unlink(missing_ok=True)
+            total_bytes -= size
+
+    def status(self) -> dict[str, object]:
+        files = 0
+        total_bytes = 0
+        oldest_mtime: float | None = None
+        newest_mtime: float | None = None
+        if self._root.exists():
+            for path in self._root.glob("*.rgb565"):
+                try:
+                    stat = path.stat()
+                except FileNotFoundError:
+                    continue
+                files += 1
+                total_bytes += stat.st_size
+                oldest_mtime = stat.st_mtime if oldest_mtime is None else min(oldest_mtime, stat.st_mtime)
+                newest_mtime = stat.st_mtime if newest_mtime is None else max(newest_mtime, stat.st_mtime)
+        return {
+            "path": str(self._root),
+            "files": files,
+            "bytes": total_bytes,
+            "max_bytes": self._max_bytes,
+            "max_age_seconds": self._max_age_seconds,
+            "memory_files": len(self._memory),
+            "memory_bytes": self._memory_bytes,
+            "memory_max_bytes": self._memory_max_bytes,
+            "memory_max_age_seconds": self._memory_max_age_seconds,
+            "oldest_mtime": oldest_mtime,
+            "newest_mtime": newest_mtime,
+        }
+
+    def _memory_get(self, key: str) -> bytes | None:
+        cached = self._memory.get(key)
+        if cached is None:
+            return None
+        cached_at, payload = cached
+        if self._memory_max_age_seconds >= 0 and time.time() - cached_at > self._memory_max_age_seconds:
+            self._memory.pop(key, None)
+            self._memory_bytes -= len(payload)
+            self._memory_bytes = max(self._memory_bytes, 0)
+            return None
+        self._memory[key] = (time.time(), payload)
+        return payload
+
+    def _memory_set(self, key: str, payload: bytes) -> None:
+        if self._memory_max_bytes <= 0:
+            self._memory.clear()
+            self._memory_bytes = 0
+            return
+
+        existing = self._memory.pop(key, None)
+        if existing is not None:
+            self._memory_bytes -= len(existing[1])
+
+        if len(payload) > self._memory_max_bytes:
+            self._memory_bytes = max(self._memory_bytes, 0)
+            self._memory_prune()
+            return
+
+        self._memory[key] = (time.time(), payload)
+        self._memory_bytes += len(payload)
+        self._memory_prune()
+
+    def _memory_prune(self) -> None:
+        if self._memory_max_bytes <= 0:
+            self._memory.clear()
+            self._memory_bytes = 0
+            return
+        now = time.time()
+        if self._memory_max_age_seconds >= 0:
+            for key, (cached_at, payload) in list(self._memory.items()):
+                if now - cached_at > self._memory_max_age_seconds:
+                    self._memory.pop(key, None)
+                    self._memory_bytes -= len(payload)
+        for key, (_, payload) in sorted(self._memory.items(), key=lambda item: item[1][0]):
+            if self._memory_bytes <= self._memory_max_bytes:
+                break
+            self._memory.pop(key, None)
+            self._memory_bytes -= len(payload)
+        self._memory_bytes = max(self._memory_bytes, 0)
+
+    def _is_expired(self, path: Path) -> bool:
+        if self._max_age_seconds < 0:
+            return False
+        try:
+            return time.time() - path.stat().st_mtime > self._max_age_seconds
+        except FileNotFoundError:
+            return True
 
 
 def display_ready_rgb565(original: bytes, options: ArtOptions) -> bytes:

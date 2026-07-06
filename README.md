@@ -126,6 +126,20 @@ MQTT_QOS=1
 MQTT_KNOB_ART_SIZE=360
 ```
 
+Artwork cache settings:
+
+```dotenv
+ART_CACHE_MAX_AGE_SECONDS=604800
+ART_CACHE_MAX_BYTES=1073741824
+ART_MEMORY_CACHE_MAX_AGE_SECONDS=86400
+ART_MEMORY_CACHE_MAX_BYTES=1073741824
+```
+
+The disk cache stores final display-ready RGB565 files for up to 7 days by default and prunes
+least-recently-used files when it exceeds 1GB. The RAM cache keeps hot RGB565 payloads for up to 1
+day by default and also defaults to a 1GB cap. `/health.art_cache` reports the effective limits,
+cache path, file count, disk bytes, RAM entries, and RAM bytes.
+
 ## Spotify Rate Limits
 
 The bridge centralizes Spotify Web API traffic and adapts its automatic polling when request volume
@@ -166,8 +180,10 @@ curl http://localhost:8090/v1/library/playlists
 curl http://localhost:8090/v1/library/playlists/{playlist_id}/tracks
 curl http://localhost:8090/v1/library/saved-tracks
 curl "http://localhost:8090/v1/knob/snapshot?refresh=true&art_size=360&art_format=rotary-lvgl"
+curl "http://localhost:8090/v1/knob/snapshot?refresh=true&art_size=240&art_format=rotary-lvgl"
 curl "http://localhost:8090/v1/art/current.jpg?size=180"
 curl -o current.rgb565 "http://localhost:8090/v1/knob/art/current.rgb565?size=360&format=rotary-lvgl&variant=player-bg"
+curl -o current-240.rgb565 "http://localhost:8090/v1/knob/art/current.rgb565?size=240&format=rotary-lvgl&variant=player-bg"
 ```
 
 `/v1/playlists`, `/v1/playlists/{id}/tracks`, and `/v1/saved-tracks` remain raw Spotify pass-through
@@ -217,7 +233,9 @@ Artwork endpoints:
 GET /v1/art/current.jpg?size=180
 GET /v1/art/current.rgb565?size=180&swap=lvgl&variant=player-bg
 GET /v1/knob/art/current.rgb565?size=360&format=rotary-lvgl&variant=player-bg
+GET /v1/knob/art/current.rgb565?size=240&format=rotary-lvgl&variant=player-bg
 GET /v1/knob/art/test-pattern.rgb565?size=360&format=rotary-lvgl
+GET /v1/knob/art/test-pattern.rgb565?size=240&format=rotary-lvgl
 GET /v1/art/proxy.jpg?url={spotify_image_url}&size=180
 GET /v1/art/{spotify_image_id}.rgb565?size=180&swap=lvgl&variant=player-bg
 ```
@@ -252,8 +270,9 @@ X-Image-Hash: sha256-of-final-processed-art-bytes
 Cache-Control: public, max-age=86400
 ```
 
-For `size=360`, the payload is exactly `360 * 360 * 2 = 259200` bytes. Processed artwork is cached
-under the bridge data directory by Spotify image id and transform options.
+For `size=360`, the payload is exactly `360 * 360 * 2 = 259200` bytes. For `size=240`, the payload
+is exactly `240 * 240 * 2 = 115200` bytes. Processed artwork is cached under the bridge data
+directory by Spotify image id and transform options, and also held in RAM while hot.
 
 For display diagnostics, request:
 
@@ -453,26 +472,35 @@ rotary/<device_id>/devices        retained, bridge -> knob
 rotary/<device_id>/status         retained, bridge -> knob
 rotary/<device_id>/request        non-retained, knob -> bridge
 rotary/<device_id>/request_result non-retained, bridge -> knob
+rotary/<device_id>/art/current/rgb565   retained binary RGB565, bridge -> knob
+rotary/<device_id>/art/next/rgb565      retained binary RGB565, bridge -> knob
+rotary/<device_id>/art/previous/rgb565  retained binary RGB565, bridge -> knob
 ```
 
 The default `<device_id>` is `knob`; set `MQTT_KNOB_DEVICE_ID=kitchen` or another stable name for a
 specific device. `/health` includes `mqtt_topics` when MQTT is enabled.
 
 The retained `state` message uses the same fields as `/v1/knob/snapshot`, including `payload_hash`,
-`playback_hash`, `art_hash`, `context.display_name`, device capability flags, and processed art URL.
+`playback_hash`, `art_hash`, `context.display_name`, device capability flags, processed art URL, and
+MQTT art metadata. When MQTT is enabled, `art`, `next_track.art`, and `previous_track.art` can include
+`mqtt_topic` and `local_cache_path`. Low-power devices can subscribe to `art.mqtt_topic` and receive
+the final RGB565 bytes from the retained binary MQTT message instead of doing an HTTP fetch. The
+`local_cache_path` is mostly for bridge-local diagnostics or co-located consumers; LAN devices cannot
+read that filesystem path directly.
+
 The bridge computes the art byte hash from the cached RGB565 payload when possible; if image fetching
-fails, state still publishes and the art endpoint remains the source of truth for image headers.
+fails, state still publishes and the HTTP art endpoint remains the source of truth for image headers.
 
 The retained `config` message advertises the active topics, HTTP base URL, art recipe, QoS, and
 supported commands/requests. The legacy retained `local-spotify-bridge/playback` envelope is still
 published for existing clients.
 
 Retained MQTT publishes are content-deduped per topic. If `state`, `config`, `status`, `devices`,
-or library payloads have the same semantic hash as the last payload on that topic, the bridge skips
-the publish so sleeping or low-power consumers are not woken for duplicate data. Volatile fields such
-as `version`, `updated_at_ms`, and successful `last_poll_at` updates do not force a publish by
-themselves. Non-retained `command_result` and `request_result` messages still publish for each
-command/request.
+library payloads, or retained binary art payloads have the same semantic hash as the last payload on
+that topic, the bridge skips the publish so sleeping or low-power consumers are not woken for
+duplicate data. Volatile fields such as `version`, `updated_at_ms`, and successful `last_poll_at`
+updates do not force a publish by themselves. Non-retained `command_result` and `request_result`
+messages still publish for each command/request.
 
 MQTT command examples:
 

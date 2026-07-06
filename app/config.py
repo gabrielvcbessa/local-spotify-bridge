@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     )
     data_path: str = Field(default="data/bridge-state.json", alias="DATA_PATH")
     public_base_url: str = Field(default="", alias="PUBLIC_BASE_URL")
+    art_cache_max_age_seconds: int = Field(default=604800, alias="ART_CACHE_MAX_AGE_SECONDS")
+    art_cache_max_bytes: int = Field(default=1073741824, alias="ART_CACHE_MAX_BYTES")
+    art_memory_cache_max_bytes: int = Field(default=1073741824, alias="ART_MEMORY_CACHE_MAX_BYTES")
+    art_memory_cache_max_age_seconds: int = Field(default=86400, alias="ART_MEMORY_CACHE_MAX_AGE_SECONDS")
 
     host: str = Field(default="0.0.0.0", alias="HOST")
     port: int = Field(default=8090, alias="PORT")

@@ -121,6 +121,29 @@ async def test_mqtt_retained_publish_skips_duplicate_payloads_by_topic():
     ]
 
 
+@pytest.mark.anyio
+async def test_mqtt_retained_binary_publish_skips_duplicate_payloads_by_topic():
+    broker = ConnectionBroker(
+        Settings(
+            MQTT_ENABLED=True,
+            MQTT_KNOB_TOPIC_PREFIX="rotary",
+            MQTT_KNOB_DEVICE_ID="kitchen",
+            MQTT_QOS=1,
+        )
+    )
+    mqtt = FakeMqttClient()
+    broker._mqtt_client = mqtt
+
+    await broker.publish_mqtt_retained_bytes("art/current/rgb565", b"1234")
+    await broker.publish_mqtt_retained_bytes("art/current/rgb565", b"1234")
+    await broker.publish_mqtt_retained_bytes("art/current/rgb565", b"5678")
+
+    assert mqtt.published == [
+        ("rotary/kitchen/art/current/rgb565", b"1234", 1, True),
+        ("rotary/kitchen/art/current/rgb565", b"5678", 1, True),
+    ]
+
+
 def test_mqtt_payload_fingerprint_ignores_volatile_fields_without_hashes():
     first = {
         "version": 1,
@@ -249,6 +272,9 @@ async def test_mqtt_topics_include_planning_doc_topics():
         "status": "rotary/kitchen/status",
         "request": "rotary/kitchen/request",
         "request_result": "rotary/kitchen/request_result",
+        "art_current": "rotary/kitchen/art/current/rgb565",
+        "art_next": "rotary/kitchen/art/next/rgb565",
+        "art_previous": "rotary/kitchen/art/previous/rgb565",
     }
 
 

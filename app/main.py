@@ -112,6 +112,7 @@ async def health() -> dict[str, Any]:
         "target_device_name": target.device_name if target else None,
         "target_device_id": target.device_id if target else None,
         "playlist_name_cache": playlist_name_cache.status(),
+        "art_cache": art_cache.status(),
         "rate_limit": spotify.rate_limit_status(settings.poll_interval_seconds),
         "mqtt_topics": broker.mqtt_topics() if settings.mqtt_enabled else None,
         "mqtt_availability": broker.last_mqtt_availability if settings.mqtt_enabled else None,
@@ -693,8 +694,9 @@ async def mqtt_knob_snapshot(version: int, state) -> dict[str, Any]:
                 broker.mark_spotify_error(exc)
 
     await prewarm_cached_track_art(spotify, state, art_options)
+    await publish_mqtt_art_payloads(spotify, state, art_options)
     await publish_mqtt_status()
-    return knob_snapshot(
+    snapshot = knob_snapshot(
         version=version,
         state=state,
         base_url=mqtt_base_url(),
@@ -703,6 +705,8 @@ async def mqtt_knob_snapshot(version: int, state) -> dict[str, Any]:
         art_hash=art_hash,
         context_name=context_name,
     )
+    annotate_mqtt_art(snapshot, state, art_options)
+    return snapshot
 
 
 def mqtt_knob_config() -> dict[str, Any]:
@@ -737,6 +741,11 @@ def mqtt_knob_config() -> dict[str, Any]:
             "swap": art_options.swap,
             "variant": art_options.variant,
             "byte_order": art_options.byte_order,
+            "topics": {
+                "current": topics["art_current"],
+                "next": topics["art_next"],
+                "previous": topics["art_previous"],
+            },
         },
         "commands": [
             "play_pause",
@@ -944,6 +953,62 @@ async def prewarm_track_art(client: SpotifyClient, track: dict[str, Any], art_op
         await cached_rgb565_art(client, image_id, image_url, art_options)
     except Exception as exc:
         broker.mark_spotify_error(exc)
+
+
+async def publish_mqtt_art_payloads(client: SpotifyClient, state: PlaybackSnapshot | None, art_options: ArtOptions) -> None:
+    if state is None:
+        return
+    current_image_id = state.album_art_id or state.knob_art_version
+    if current_image_id and state.album_art_url:
+        try:
+            payload = await cached_rgb565_art(client, current_image_id, state.album_art_url, art_options)
+            await broker.publish_mqtt_retained_bytes("art/current/rgb565", payload)
+        except Exception as exc:
+            broker.mark_spotify_error(exc)
+
+    for topic_key, track in (
+        ("art/next/rgb565", state.next_track),
+        ("art/previous/rgb565", state.previous_track),
+    ):
+        if not isinstance(track, dict):
+            continue
+        image_id = track.get("album_art_id")
+        image_url = track.get("album_art_url")
+        if not isinstance(image_id, str) or not image_id:
+            continue
+        if not isinstance(image_url, str) or not image_url:
+            continue
+        try:
+            payload = await cached_rgb565_art(client, image_id, image_url, art_options)
+            await broker.publish_mqtt_retained_bytes(topic_key, payload)
+        except Exception as exc:
+            broker.mark_spotify_error(exc)
+
+
+def annotate_mqtt_art(snapshot: dict[str, Any], state: PlaybackSnapshot | None, art_options: ArtOptions) -> None:
+    if state is None:
+        return
+
+    current_image_id = state.album_art_id or state.knob_art_version
+    if current_image_id and isinstance(snapshot.get("art"), dict):
+        add_mqtt_art_fields(snapshot["art"], current_image_id, art_options, "art/current/rgb565")
+
+    for key, topic_key in (
+        ("next_track", "art/next/rgb565"),
+        ("previous_track", "art/previous/rgb565"),
+    ):
+        track = snapshot.get(key)
+        if not isinstance(track, dict):
+            continue
+        art = track.get("art")
+        image_id = track.get("album_art_id")
+        if isinstance(art, dict) and isinstance(image_id, str) and image_id:
+            add_mqtt_art_fields(art, image_id, art_options, topic_key)
+
+
+def add_mqtt_art_fields(art: dict[str, Any], image_id: str, art_options: ArtOptions, topic_key: str) -> None:
+    art["mqtt_topic"] = broker.mqtt_topic(topic_key)
+    art["local_cache_path"] = str(art_cache.path_for(image_id, art_options))
 
 
 async def handle_mqtt_request(command: dict[str, Any]) -> dict[str, Any]:

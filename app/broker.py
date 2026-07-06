@@ -236,6 +236,9 @@ class ConnectionBroker:
             "status": self.mqtt_topic("status"),
             "request": self.mqtt_topic("request"),
             "request_result": self.mqtt_topic("request_result"),
+            "art_current": self.mqtt_topic("art/current/rgb565"),
+            "art_next": self.mqtt_topic("art/next/rgb565"),
+            "art_previous": self.mqtt_topic("art/previous/rgb565"),
         }
 
     def _on_mqtt_connect(self, client, _, __, reason_code, ___) -> None:
@@ -310,6 +313,11 @@ class ConnectionBroker:
             return
         self._publish_mqtt_json(self.mqtt_topic(topic_key), payload, retain=True)
 
+    async def publish_mqtt_retained_bytes(self, topic_key: str, payload: bytes) -> None:
+        if self._mqtt_client is None:
+            return
+        self._publish_mqtt_bytes(self.mqtt_topic(topic_key), payload, retain=True)
+
     def _publish_mqtt_json(self, topic: str, payload: dict[str, Any], *, retain: bool) -> bool:
         if self._mqtt_client is None:
             return False
@@ -322,6 +330,19 @@ class ConnectionBroker:
             self._mqtt_payload_fingerprints[topic] = fingerprint
 
         self._mqtt_client.publish(topic, text, qos=self._settings.mqtt_qos, retain=retain)
+        return True
+
+    def _publish_mqtt_bytes(self, topic: str, payload: bytes, *, retain: bool) -> bool:
+        if self._mqtt_client is None:
+            return False
+
+        if retain:
+            fingerprint = f"bytes:{hashlib.sha256(payload).hexdigest()}"
+            if self._mqtt_payload_fingerprints.get(topic) == fingerprint:
+                return False
+            self._mqtt_payload_fingerprints[topic] = fingerprint
+
+        self._mqtt_client.publish(topic, payload, qos=self._settings.mqtt_qos, retain=retain)
         return True
 
 

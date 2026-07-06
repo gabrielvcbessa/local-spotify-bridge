@@ -59,6 +59,38 @@ def test_mqtt_knob_config_defaults_to_stopwatch_art_size():
         "http://localhost:8090/v1/knob/art/current.rgb565"
         "?size=360&format=rotary-lvgl&variant=player-bg"
     )
+    assert config["art"]["topics"] == {
+        "current": "rotary/knob/art/current/rgb565",
+        "next": "rotary/knob/art/next/rgb565",
+        "previous": "rotary/knob/art/previous/rgb565",
+    }
+
+
+def test_mqtt_art_annotation_adds_topic_and_local_cache_path():
+    state = PlaybackSnapshot(
+        album_art_url="https://i.scdn.co/image/current-art",
+        album_art_id="current-art",
+        next_track={
+            "id": "next-track",
+            "title": "Next",
+            "album_art_id": "next-art",
+            "album_art_url": "https://i.scdn.co/image/next-art",
+        },
+    )
+    snapshot = knob_snapshot(
+        version=1,
+        state=state,
+        base_url="http://bridge.local:8090",
+        spotify_configured=True,
+        art_options=ArtOptions(size=240, swap="lvgl", variant="player-bg"),
+    )
+
+    main.annotate_mqtt_art(snapshot, state, ArtOptions(size=240, swap="lvgl", variant="player-bg"))
+
+    assert snapshot["art"]["mqtt_topic"] == "rotary/knob/art/current/rgb565"
+    assert snapshot["art"]["local_cache_path"].endswith("current-art-size240-themedark-swaplvgl-variantplayer-bg-blur0-dark0.52-sat0.9-contrast1.08-circle0.rgb565")
+    assert snapshot["next_track"]["art"]["mqtt_topic"] == "rotary/knob/art/next/rgb565"
+    assert snapshot["next_track"]["art"]["local_cache_path"].endswith("next-art-size240-themedark-swaplvgl-variantplayer-bg-blur0-dark0.52-sat0.9-contrast1.08-circle0.rgb565")
 
 
 def test_knob_snapshot_shapes_render_contract_and_hashes(monkeypatch):
