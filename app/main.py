@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse, Response
 from PIL import Image
 
 from .art import ArtCache, ArtOptions, art_version, bytes_hash, color_bar_test_pattern_rgb565, display_ready_rgb565, image_to_rgb565
-from .broker import ConnectionBroker, StatePoller
+from .broker import ConnectionBroker, PeriodicPoller, StatePoller
 from .config import get_settings
 from .context_cache import PlaylistNameCache, playback_context_parts, schedule_playlist_resolve
 from .knob import knob_snapshot
@@ -34,8 +34,21 @@ poller = StatePoller(
     settings.poll_interval_seconds,
     interval_strategy=spotify.next_poll_interval,
 )
+devices_poller = PeriodicPoller(
+    lambda: refresh_devices_and_publish(spotify),
+    settings.spotify_background_poll_interval_seconds,
+    error_handler=broker.mark_spotify_error,
+    interval_strategy=spotify.next_poll_interval,
+)
+library_poller = PeriodicPoller(
+    lambda: refresh_library_and_publish(spotify),
+    settings.spotify_background_poll_interval_seconds,
+    error_handler=broker.mark_spotify_error,
+    interval_strategy=spotify.next_poll_interval,
+)
 art_cache = ArtCache(settings)
 playlist_name_cache = PlaylistNameCache()
+cached_devices: list[dict[str, Any]] | None = None
 
 
 @asynccontextmanager
@@ -47,7 +60,11 @@ async def lifespan(_: FastAPI):
     await broker.start()
     if spotify.spotify_configured:
         poller.start()
+        devices_poller.start()
+        library_poller.start()
     yield
+    await library_poller.stop()
+    await devices_poller.stop()
     await poller.stop()
     await broker.stop()
     await spotify.close()
@@ -377,7 +394,8 @@ async def set_volume(
 @app.get("/v1/devices")
 async def devices(client: Annotated[SpotifyClient, Depends(spotify_client)] = spotify):
     try:
-        return await client.devices()
+        device_list = await current_devices(client, refresh=True)
+        return {"devices": device_list}
     except Exception as exc:
         raise translate_spotify_error(exc) from exc
 
@@ -504,7 +522,7 @@ async def knob_devices(
     client: Annotated[SpotifyClient, Depends(spotify_client)] = spotify,
 ) -> dict[str, Any]:
     try:
-        return await build_devices_payload(client, request_id=request_id, offset=offset, limit=limit)
+        return await build_devices_payload(client, request_id=request_id, offset=offset, limit=limit, refresh=True)
     except Exception as exc:
         raise translate_spotify_error(exc) from exc
 
@@ -802,11 +820,49 @@ async def publish_mqtt_status() -> None:
     await broker.publish_mqtt_retained("status", mqtt_status_payload())
 
 
+async def refresh_devices_and_publish(client: SpotifyClient) -> dict[str, Any]:
+    payload = await build_devices_payload(client, request_id=None, offset=0, limit=10, refresh=True)
+    await broker.publish_mqtt_retained("devices", payload)
+    return payload
+
+
+async def refresh_library_and_publish(client: SpotifyClient) -> None:
+    root_payload = await build_library_root_payload(client)
+    await broker.publish_mqtt_retained("library/root", root_payload)
+    page_payload = await build_library_page_payload(
+        client,
+        request_id=None,
+        page=0,
+        kind="playlists",
+        offset=0,
+        limit=3,
+    )
+    await broker.publish_mqtt_retained("library/page", page_payload)
+
+
+async def current_devices(client: SpotifyClient, *, refresh: bool = False) -> list[dict[str, Any]]:
+    global cached_devices
+    if cached_devices is not None and not refresh:
+        return cached_devices
+
+    payload = await client.devices()
+    devices = payload.get("devices", []) if isinstance(payload, dict) else []
+    cached_devices = devices
+    return devices
+
+
+def active_device_id(devices: list[dict[str, Any]]) -> str | None:
+    for device in devices:
+        if device.get("is_active"):
+            device_id = device.get("id")
+            return device_id if isinstance(device_id, str) else None
+    return None
+
+
 async def build_library_root_payload(client: SpotifyClient) -> dict[str, Any]:
     playlists_payload = await client.playlists(limit=1, offset=0)
     saved_payload = await client.saved_tracks(limit=1, offset=0)
-    devices_raw = await client.devices()
-    devices = devices_raw.get("devices", []) if isinstance(devices_raw, dict) else []
+    devices = cached_devices or []
     return library_root_payload(
         version=broker.version,
         playlist_total=playlists_payload.get("total") if isinstance(playlists_payload, dict) else None,
@@ -865,7 +921,7 @@ async def build_library_page_payload(
         )
 
     if kind == "devices":
-        return await build_devices_page_payload(client, request_id=request_id, page=page, offset=offset, limit=limit)
+        return await build_devices_page_payload(client, request_id=request_id, page=page, offset=offset, limit=limit, refresh=True)
 
     raise ValueError(f"Unsupported library page kind: {kind}")
 
@@ -876,19 +932,14 @@ async def build_devices_payload(
     request_id: str | None,
     offset: int,
     limit: int,
+    refresh: bool = False,
 ) -> dict[str, Any]:
-    payload = await client.devices()
-    devices = payload.get("devices", []) if isinstance(payload, dict) else []
-    active_device_id = None
-    for device in devices:
-        if device.get("is_active"):
-            active_device_id = device.get("id")
-            break
+    devices = await current_devices(client, refresh=refresh)
     return devices_payload(
         version=broker.version,
         request_id=request_id,
         devices=devices,
-        active_device_id=active_device_id,
+        active_device_id=active_device_id(devices),
         target=store.get_target_device(),
         offset=offset,
         limit=limit,
@@ -902,8 +953,9 @@ async def build_devices_page_payload(
     page: int,
     offset: int,
     limit: int,
+    refresh: bool = False,
 ) -> dict[str, Any]:
-    devices = await build_devices_payload(client, request_id=request_id, offset=offset, limit=limit)
+    devices = await build_devices_payload(client, request_id=request_id, offset=offset, limit=limit, refresh=refresh)
     items = [
         {
             "slot": item["slot"],
@@ -1040,7 +1092,7 @@ async def handle_mqtt_request(command: dict[str, Any]) -> dict[str, Any]:
         return {"published_topic": broker.mqtt_topic("library/page"), "published_version": payload["version"]}
 
     if request_type == "devices":
-        payload = await build_devices_payload(spotify, request_id=request_id, offset=offset, limit=limit)
+        payload = await build_devices_payload(spotify, request_id=request_id, offset=offset, limit=limit, refresh=True)
         await broker.publish_mqtt_retained("devices", payload)
         page_payload = await build_devices_page_payload(spotify, request_id=request_id, page=2, offset=offset, limit=limit)
         await broker.publish_mqtt_retained("library/page", page_payload)

@@ -550,3 +550,51 @@ class StatePoller:
         if self._interval_strategy is None:
             return self._interval_seconds
         return max(self._interval_seconds, self._interval_strategy(self._interval_seconds))
+
+
+class PeriodicPoller:
+    def __init__(
+        self,
+        task: Callable[[], Awaitable[None]],
+        interval_seconds: float,
+        *,
+        error_handler: Callable[[Exception], None] | None = None,
+        interval_strategy: Callable[[float], float] | None = None,
+    ) -> None:
+        self._task_callback = task
+        self._interval_seconds = interval_seconds
+        self._error_handler = error_handler
+        self._interval_strategy = interval_strategy
+        self._task: asyncio.Task[None] | None = None
+        self._stopped = asyncio.Event()
+
+    def start(self) -> None:
+        if self._task is None:
+            self._task = asyncio.create_task(self._run())
+
+    async def stop(self) -> None:
+        self._stopped.set()
+        if self._task is not None:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+            self._task = None
+
+    async def poll_once(self) -> None:
+        await self._task_callback()
+
+    async def _run(self) -> None:
+        while not self._stopped.is_set():
+            try:
+                await self.poll_once()
+            except Exception as exc:
+                if self._error_handler is not None:
+                    self._error_handler(exc)
+            await asyncio.sleep(self._next_interval_seconds())
+
+    def _next_interval_seconds(self) -> float:
+        if self._interval_strategy is None:
+            return self._interval_seconds
+        return max(self._interval_seconds, self._interval_strategy(self._interval_seconds))

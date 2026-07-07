@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from app.broker import ConnectionBroker, StatePoller
+from app.broker import ConnectionBroker, PeriodicPoller, StatePoller
 from app.config import Settings
 from app.rate_limit import SpotifyRateLimiter
 from app.spotify import SpotifyClient
@@ -60,6 +60,19 @@ def test_state_poller_never_goes_faster_than_base_interval():
     poller = StatePoller(fetch_state, broker, 3, interval_strategy=lambda _: 1)
 
     assert poller._next_interval_seconds() == 3
+
+
+def test_periodic_poller_uses_adaptive_backoff_without_going_faster_than_base():
+    async def task():
+        return None
+
+    poller = PeriodicPoller(task, 30, interval_strategy=lambda _: 10)
+
+    assert poller._next_interval_seconds() == 30
+
+    poller = PeriodicPoller(task, 30, interval_strategy=lambda _: 45)
+
+    assert poller._next_interval_seconds() == 45
 
 
 @pytest.mark.asyncio

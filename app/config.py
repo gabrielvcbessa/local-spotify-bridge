@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     host: str = Field(default="0.0.0.0", alias="HOST")
     port: int = Field(default=8090, alias="PORT")
     poll_interval_seconds: float = Field(default=3.0, alias="POLL_INTERVAL_SECONDS")
+    spotify_background_poll_interval_seconds: float = Field(default=30.0, alias="SPOTIFY_BACKGROUND_POLL_INTERVAL_SECONDS")
     spotify_rate_limit_window_seconds: float = Field(default=30.0, alias="SPOTIFY_RATE_LIMIT_WINDOW_SECONDS")
     spotify_rate_limit_soft_requests_per_window: int = Field(
         default=20,
