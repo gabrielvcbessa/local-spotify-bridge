@@ -161,6 +161,46 @@ def test_mqtt_payload_fingerprint_ignores_volatile_fields_without_hashes():
     assert mqtt_payload_fingerprint(first) == mqtt_payload_fingerprint(second)
 
 
+def test_mqtt_payload_fingerprint_ignores_progress_only_state_changes():
+    first = {
+        "version": 1,
+        "payload_hash": "progress-hash-1",
+        "playback_hash": "playback-hash-1",
+        "progress_ms": 10_000,
+        "is_playing": True,
+        "track": {"id": "track-1", "title": "Song"},
+        "server": {"updated_at_ms": 100},
+    }
+    second = {
+        "version": 2,
+        "payload_hash": "progress-hash-2",
+        "playback_hash": "playback-hash-2",
+        "progress_ms": 16_000,
+        "is_playing": True,
+        "track": {"id": "track-1", "title": "Song"},
+        "server": {"updated_at_ms": 200},
+    }
+
+    assert mqtt_payload_fingerprint(first) == mqtt_payload_fingerprint(second)
+
+
+def test_mqtt_payload_fingerprint_keeps_track_changes_meaningful():
+    first = {
+        "payload_hash": "hash-1",
+        "playback_hash": "playback-1",
+        "progress_ms": 10_000,
+        "track": {"id": "track-1", "title": "Song"},
+    }
+    second = {
+        "payload_hash": "hash-2",
+        "playback_hash": "playback-2",
+        "progress_ms": 0,
+        "track": {"id": "track-2", "title": "Next song"},
+    }
+
+    assert mqtt_payload_fingerprint(first) != mqtt_payload_fingerprint(second)
+
+
 def test_mqtt_status_hash_ignores_successful_poll_timestamp():
     first = status_payload(
         version=1,

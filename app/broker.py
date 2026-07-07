@@ -348,7 +348,9 @@ class ConnectionBroker:
 
 def mqtt_payload_fingerprint(payload: dict[str, Any]) -> str:
     if isinstance(payload.get("payload_hash"), str):
-        return f"payload_hash:{payload['payload_hash']}"
+        normalized = strip_mqtt_volatile_fields(payload)
+        encoded = json.dumps(normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+        return f"state:{hashlib.sha256(encoded).hexdigest()}"
     if isinstance(payload.get("hash"), str):
         return f"hash:{payload['hash']}"
 
@@ -362,7 +364,7 @@ def strip_mqtt_volatile_fields(value: Any) -> Any:
         return {
             key: strip_mqtt_volatile_fields(item)
             for key, item in value.items()
-            if key not in {"updated_at_ms", "version"}
+            if key not in {"updated_at_ms", "version", "progress_ms", "payload_hash", "playback_hash"}
         }
     if isinstance(value, list):
         return [strip_mqtt_volatile_fields(item) for item in value]
