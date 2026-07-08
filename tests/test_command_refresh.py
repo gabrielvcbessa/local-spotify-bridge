@@ -53,7 +53,32 @@ class FakeDevicesClient:
 
     async def playlists(self, *, limit: int, offset: int):
         self.playlists_calls += 1
-        return {"total": 3, "items": []}
+        items = [
+            {
+                "id": "playlist-b",
+                "uri": "spotify:playlist:playlist-b",
+                "name": "Beta",
+                "owner": {"display_name": "Gabriel"},
+                "tracks": {"total": 2},
+            },
+            {
+                "id": "playlist-a",
+                "uri": "spotify:playlist:playlist-a",
+                "name": "Alpha",
+                "owner": {"display_name": "Gabriel"},
+                "tracks": {"total": 1},
+            },
+            {
+                "id": "playlist-c",
+                "uri": "spotify:playlist:playlist-c",
+                "name": "charlie",
+                "owner": {"display_name": "Gabriel"},
+                "tracks": {"total": 3},
+            },
+        ]
+        page_items = items[offset : offset + 2]
+        next_url = "https://api.spotify.com/v1/me/playlists?offset=2" if offset + len(page_items) < len(items) else None
+        return {"total": len(items), "limit": limit, "offset": offset, "next": next_url, "items": page_items}
 
     async def saved_tracks(self, *, limit: int, offset: int):
         self.saved_tracks_calls += 1
@@ -120,6 +145,35 @@ async def test_library_root_uses_cached_devices_without_fetching_devices():
 
     assert client.devices_calls == 0
     assert payload["pages"][2]["total"] == 1
+
+
+@pytest.mark.asyncio
+async def test_full_playlists_payload_paginates_all_playlists_in_spotify_order(monkeypatch):
+    client = FakeDevicesClient()
+    previous_sort = main.settings.spotify_playlist_sort
+    monkeypatch.setattr(main.settings, "spotify_playlist_sort", "spotify")
+
+    payload = await main.build_full_playlists_payload(client)
+
+    monkeypatch.setattr(main.settings, "spotify_playlist_sort", previous_sort)
+    assert client.playlists_calls == 2
+    assert payload["total"] == 3
+    assert [item["title"] for item in payload["items"]] == ["Beta", "Alpha", "charlie"]
+    assert payload["sort_order"] == "spotify"
+
+
+@pytest.mark.asyncio
+async def test_full_playlists_payload_can_sort_alphabetically(monkeypatch):
+    client = FakeDevicesClient()
+    previous_sort = main.settings.spotify_playlist_sort
+    monkeypatch.setattr(main.settings, "spotify_playlist_sort", "alpha")
+
+    payload = await main.build_full_playlists_payload(client)
+
+    monkeypatch.setattr(main.settings, "spotify_playlist_sort", previous_sort)
+    assert client.playlists_calls == 2
+    assert [item["title"] for item in payload["items"]] == ["Alpha", "Beta", "charlie"]
+    assert payload["sort_order"] == "alpha"
 
 
 @pytest.mark.asyncio

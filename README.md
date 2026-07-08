@@ -145,7 +145,7 @@ cache path, file count, disk bytes, RAM entries, and RAM bytes.
 The bridge centralizes Spotify Web API traffic and adapts its automatic polling when request volume
 gets close to a configurable soft threshold. `POLL_INTERVAL_SECONDS` is the minimum playback polling
 interval. `SPOTIFY_BACKGROUND_POLL_INTERVAL_SECONDS` is the minimum devices/playlists polling
-interval, defaulting to 30 seconds. Devices and the first playlist page publish MQTT retained updates
+interval, defaulting to 30 seconds. Devices and the full playlist index publish MQTT retained updates
 only when their semantic payload changes. If Spotify returns `429` with a `Retry-After` header,
 future API calls wait for that window and every poller backs off until the retry window clears.
 
@@ -161,8 +161,12 @@ SPOTIFY_RATE_LIMIT_BACKOFF_MULTIPLIER=1.25
 SPOTIFY_RATE_LIMIT_MAX_POLL_INTERVAL_SECONDS=60
 SPOTIFY_RATE_LIMIT_RETRY_AFTER_PADDING_SECONDS=0.5
 SPOTIFY_PRELOAD_NEXT_ENABLED=true
+SPOTIFY_PLAYLIST_SORT=spotify
 COMMAND_FOLLOWUP_REFRESH_DELAYS_SECONDS=0.5,1.5
 ```
+
+`SPOTIFY_PLAYLIST_SORT=spotify` preserves Spotify's playlist order from `/me/playlists`.
+`SPOTIFY_PLAYLIST_SORT=alpha` sorts the full retained playlist index alphabetically by title.
 
 `/health` includes `rate_limit` diagnostics with the current rolling-window request count, adaptive
 poll interval, and any active `Retry-After` wait. Spotify does not publish one universal numeric
@@ -181,6 +185,7 @@ curl http://localhost:8090/v1/saved-tracks
 curl http://localhost:8090/v1/library/playlists
 curl http://localhost:8090/v1/library/playlists/{playlist_id}/tracks
 curl http://localhost:8090/v1/library/saved-tracks
+curl http://localhost:8090/v1/knob/library/playlists
 curl "http://localhost:8090/v1/knob/snapshot?refresh=true&art_size=360&art_format=rotary-lvgl"
 curl "http://localhost:8090/v1/knob/snapshot?refresh=true&art_size=240&art_format=rotary-lvgl"
 curl "http://localhost:8090/v1/art/current.jpg?size=180"
@@ -470,6 +475,7 @@ rotary/<device_id>/command_result non-retained, bridge -> knob
 rotary/<device_id>/availability   retained, knob -> bridge
 rotary/<device_id>/library/root   retained, bridge -> knob
 rotary/<device_id>/library/page   retained, bridge -> knob
+rotary/<device_id>/library/playlists retained, full playlist index, bridge -> knob
 rotary/<device_id>/devices        retained, bridge -> knob
 rotary/<device_id>/status         retained, bridge -> knob
 rotary/<device_id>/request        non-retained, knob -> bridge
@@ -527,6 +533,7 @@ MQTT request examples for non-playback data:
 
 ```json
 { "request_id": "knob-1", "type": "library_root" }
+{ "request_id": "knob-1b", "type": "library_playlists" }
 { "request_id": "knob-2", "type": "library_page", "kind": "playlists", "page": 0, "offset": 0, "limit": 3 }
 { "request_id": "knob-3", "type": "library_page", "kind": "playlist_tracks", "parent_uri": "spotify:playlist:...", "offset": 0, "limit": 3 }
 { "request_id": "knob-4", "type": "devices", "offset": 0, "limit": 3 }
@@ -542,6 +549,7 @@ REST mirrors for debugging:
 ```text
 GET  /v1/knob/status
 GET  /v1/knob/library/root
+GET  /v1/knob/library/playlists
 GET  /v1/knob/library/page?kind=playlists&offset=0&limit=3
 GET  /v1/knob/library/page?kind=playlist_tracks&parent_uri=spotify:playlist:...&offset=0&limit=3
 GET  /v1/knob/devices?offset=0&limit=3

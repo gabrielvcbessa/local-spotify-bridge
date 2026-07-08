@@ -12,7 +12,7 @@ from .broker import ConnectionBroker, PeriodicPoller, StatePoller
 from .config import get_settings
 from .context_cache import PlaylistNameCache, playback_context_parts, schedule_playlist_resolve
 from .knob import knob_snapshot
-from .knob_mqtt import devices_payload, envelope, library_page_payload, library_root_payload, status_payload
+from .knob_mqtt import devices_payload, envelope, library_item_payload, library_page_payload, library_root_payload, status_payload
 from .models import PlaybackCommand, PlaybackSnapshot, SeekCommand, TargetDeviceCommand, TransferPlaybackCommand, VolumeCommand
 from .spotify import (
     SpotifyAuthNotConfigured,
@@ -490,6 +490,17 @@ async def knob_library_root(
         raise translate_spotify_error(exc) from exc
 
 
+@app.get("/v1/knob/library/playlists")
+async def knob_library_playlists(
+    request_id: str | None = None,
+    client: Annotated[SpotifyClient, Depends(spotify_client)] = spotify,
+) -> dict[str, Any]:
+    try:
+        return await build_full_playlists_payload(client, request_id=request_id)
+    except Exception as exc:
+        raise translate_spotify_error(exc) from exc
+
+
 @app.get("/v1/knob/library/page")
 async def knob_library_page(
     kind: str = Query(pattern="^(playlists|saved_tracks|playlist_tracks|devices)$"),
@@ -739,6 +750,7 @@ def mqtt_knob_config() -> dict[str, Any]:
             "config": True,
             "library_root": True,
             "library_page": True,
+            "library_playlists": True,
             "devices": True,
             "status": True,
             "command_result": False,
@@ -779,7 +791,7 @@ def mqtt_knob_config() -> dict[str, Any]:
             "repeat_set",
             "play_library_item",
         ],
-        "requests": ["library_root", "library_page", "devices", "refresh"],
+        "requests": ["library_root", "library_page", "library_playlists", "devices", "refresh"],
         "limits": {
             "knob_visible_rows": 3,
             "library_page_limit": 3,
@@ -829,6 +841,8 @@ async def refresh_devices_and_publish(client: SpotifyClient) -> dict[str, Any]:
 async def refresh_library_and_publish(client: SpotifyClient) -> None:
     root_payload = await build_library_root_payload(client)
     await broker.publish_mqtt_retained("library/root", root_payload)
+    playlists_payload = await build_full_playlists_payload(client)
+    await broker.publish_mqtt_retained("library/playlists", playlists_payload)
     page_payload = await build_library_page_payload(
         client,
         request_id=None,
@@ -869,6 +883,56 @@ async def build_library_root_payload(client: SpotifyClient) -> dict[str, Any]:
         saved_total=saved_payload.get("total") if isinstance(saved_payload, dict) else None,
         device_total=len(devices),
     )
+
+
+async def fetch_all_playlists(client: SpotifyClient) -> dict[str, Any]:
+    limit = 50
+    offset = 0
+    total: int | None = None
+    items: list[dict[str, Any]] = []
+
+    while True:
+        payload = await client.playlists(limit=limit, offset=offset)
+        page_items = payload.get("items", []) if isinstance(payload, dict) else []
+        items.extend([item for item in page_items if isinstance(item, dict)])
+        if total is None and isinstance(payload, dict) and isinstance(payload.get("total"), int):
+            total = payload["total"]
+        next_url = payload.get("next") if isinstance(payload, dict) else None
+        if not page_items:
+            break
+        offset += len(page_items)
+        if not next_url:
+            break
+        if total is not None and offset >= total:
+            break
+
+    items = sort_playlist_items(items)
+    return {
+        "items": items,
+        "limit": len(items),
+        "offset": 0,
+        "total": total if total is not None else len(items),
+        "next": None,
+    }
+
+
+def sort_playlist_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if settings.spotify_playlist_sort == "alpha":
+        return sorted(items, key=lambda item: ((item.get("name") or "Untitled playlist").casefold(), item.get("id") or ""))
+    return items
+
+
+async def build_full_playlists_payload(client: SpotifyClient, request_id: str | None = None) -> dict[str, Any]:
+    compact = compact_playlists(await fetch_all_playlists(client))
+    payload = {
+        "request_id": request_id,
+        "kind": "playlists",
+        "title": "Playlists",
+        "sort_order": settings.spotify_playlist_sort,
+        "total": compact.total,
+        "items": [library_item_payload(item, slot) for slot, item in enumerate(compact.items)],
+    }
+    return envelope(version=broker.version, payload=payload, hash_payload={k: v for k, v in payload.items() if k != "request_id"})
 
 
 async def build_library_page_payload(
@@ -1090,6 +1154,11 @@ async def handle_mqtt_request(command: dict[str, Any]) -> dict[str, Any]:
         )
         await broker.publish_mqtt_retained("library/page", payload)
         return {"published_topic": broker.mqtt_topic("library/page"), "published_version": payload["version"]}
+
+    if request_type == "library_playlists":
+        payload = await build_full_playlists_payload(spotify, request_id=request_id)
+        await broker.publish_mqtt_retained("library/playlists", payload)
+        return {"published_topic": broker.mqtt_topic("library/playlists"), "published_version": payload["version"]}
 
     if request_type == "devices":
         payload = await build_devices_payload(spotify, request_id=request_id, offset=offset, limit=limit, refresh=True)

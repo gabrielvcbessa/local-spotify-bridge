@@ -49,6 +49,7 @@ class Settings(BaseSettings):
         alias="SPOTIFY_RATE_LIMIT_RETRY_AFTER_PADDING_SECONDS",
     )
     spotify_preload_next_enabled: bool = Field(default=True, alias="SPOTIFY_PRELOAD_NEXT_ENABLED")
+    spotify_playlist_sort: str = Field(default="spotify", alias="SPOTIFY_PLAYLIST_SORT")
     command_followup_refresh_delays_seconds: str = Field(
         default="0.5,1.5",
         alias="COMMAND_FOLLOWUP_REFRESH_DELAYS_SECONDS",

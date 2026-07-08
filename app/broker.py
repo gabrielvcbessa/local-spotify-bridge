@@ -232,6 +232,7 @@ class ConnectionBroker:
             "availability": self.mqtt_topic("availability"),
             "library_root": self.mqtt_topic("library/root"),
             "library_page": self.mqtt_topic("library/page"),
+            "library_playlists": self.mqtt_topic("library/playlists"),
             "devices": self.mqtt_topic("devices"),
             "status": self.mqtt_topic("status"),
             "request": self.mqtt_topic("request"),

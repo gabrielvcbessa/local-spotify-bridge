@@ -308,6 +308,7 @@ async def test_mqtt_topics_include_planning_doc_topics():
         "availability": "rotary/kitchen/availability",
         "library_root": "rotary/kitchen/library/root",
         "library_page": "rotary/kitchen/library/page",
+        "library_playlists": "rotary/kitchen/library/playlists",
         "devices": "rotary/kitchen/devices",
         "status": "rotary/kitchen/status",
         "request": "rotary/kitchen/request",
