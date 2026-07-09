@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     poll_interval_seconds: float = Field(default=3.0, alias="POLL_INTERVAL_SECONDS")
     spotify_idle_poll_interval_seconds: float = Field(default=300.0, alias="SPOTIFY_IDLE_POLL_INTERVAL_SECONDS")
     spotify_background_poll_interval_seconds: float = Field(default=30.0, alias="SPOTIFY_BACKGROUND_POLL_INTERVAL_SECONDS")
+    spotify_playlist_poll_interval_seconds: float = Field(default=7200.0, alias="SPOTIFY_PLAYLIST_POLL_INTERVAL_SECONDS")
     active_consumer_ttl_seconds: float = Field(default=120.0, alias="ACTIVE_CONSUMER_TTL_SECONDS")
     spotify_rate_limit_window_seconds: float = Field(default=30.0, alias="SPOTIFY_RATE_LIMIT_WINDOW_SECONDS")
     spotify_rate_limit_soft_requests_per_window: int = Field(

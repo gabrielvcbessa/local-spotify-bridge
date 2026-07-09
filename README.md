@@ -144,13 +144,14 @@ cache path, file count, disk bytes, RAM entries, and RAM bytes.
 
 The bridge centralizes Spotify Web API traffic and adapts its automatic polling when request volume
 gets close to a configurable soft threshold. `POLL_INTERVAL_SECONDS` is the minimum playback polling
-interval. `SPOTIFY_BACKGROUND_POLL_INTERVAL_SECONDS` is the minimum devices/playlists polling
-interval, defaulting to 30 seconds while a consumer is active. `SPOTIFY_IDLE_POLL_INTERVAL_SECONDS`
+interval. `SPOTIFY_BACKGROUND_POLL_INTERVAL_SECONDS` is the minimum devices polling interval,
+defaulting to 30 seconds while a consumer is active. `SPOTIFY_PLAYLIST_POLL_INTERVAL_SECONDS`
+is the automatic playlist/library polling interval and defaults to 2 hours. `SPOTIFY_IDLE_POLL_INTERVAL_SECONDS`
 is the shared lower bound for all Spotify polling when no WebSocket client is connected and no recent
-MQTT availability heartbeat is online. Devices and the full playlist index publish MQTT retained
-updates only when their semantic payload changes. If Spotify returns `429` with a `Retry-After`
-header, future API calls wait for that window and every poller backs off until the retry window
-clears.
+MQTT availability heartbeat is online, but it never makes a slower poller faster; playlists still use
+the playlist interval if it is larger. Devices and the full playlist index publish MQTT retained
+updates only when their semantic payload changes. Spotify `429 Retry-After` cooldowns are tracked by
+endpoint group, so a playlist cooldown does not block `/me/player` now-playing refreshes.
 
 `/health.polling` reports whether the bridge currently detects active consumers and which active or
 idle lower bounds are being used. That makes it easy to confirm whether the bridge is in fast
@@ -161,6 +162,7 @@ Useful tuning settings:
 ```dotenv
 POLL_INTERVAL_SECONDS=3
 SPOTIFY_BACKGROUND_POLL_INTERVAL_SECONDS=30
+SPOTIFY_PLAYLIST_POLL_INTERVAL_SECONDS=7200
 SPOTIFY_IDLE_POLL_INTERVAL_SECONDS=300
 ACTIVE_CONSUMER_TTL_SECONDS=120
 DEBUG_TELEMETRY_MAX_EVENTS=50000
@@ -197,18 +199,21 @@ The bridge includes a local dashboard for request visibility:
 GET /debug
 GET /v1/debug/status
 GET /v1/debug/requests
+GET /v1/debug/events
 ```
 
 `/debug` is a browser page for local operations. It shows the current polling mode, detected
 consumers, recent events, and grouped counts for these periods: `1h`, `3h`, `6h`, `12h`, `1d`,
-`3d`, and `7d`.
+`3d`, and `7d`. Summary rows are clickable: selecting a Spotify request type or MQTT topic opens a
+detail view with the latest matching events, status, and a capped response/payload preview. Recent
+events are paginated and filtered by the selected period.
 
 The dashboard records two log streams:
 
 - `spotify_api_request`: actual Spotify Web API calls by method and endpoint, including status,
-  latency, errors, `Retry-After`, and rate-limit wait time.
+  latency, errors, `Retry-After`, rate-limit wait time, and a capped response preview.
 - `mqtt_posting`: MQTT publish attempts by topic, including retained duplicate skips, payload size,
-  QoS, and retain flag.
+  QoS, retain flag, and a capped payload preview.
 
 Telemetry is in-memory and private to the bridge process. `DEBUG_TELEMETRY_MAX_EVENTS` caps the ring
 buffer size and `DEBUG_TELEMETRY_RETENTION_SECONDS` controls how long events stay available. The

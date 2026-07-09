@@ -43,7 +43,7 @@ poller = StatePoller(
     spotify.current_playback,
     broker,
     settings.poll_interval_seconds,
-    interval_strategy=spotify.next_poll_interval,
+    interval_strategy=lambda interval: spotify.next_poll_interval(interval, group="playback"),
     idle_interval_seconds=settings.spotify_idle_poll_interval_seconds,
     active_strategy=has_active_consumers,
     track_end_refresh_padding_seconds=settings.spotify_track_end_refresh_padding_seconds,
@@ -52,15 +52,15 @@ devices_poller = PeriodicPoller(
     lambda: refresh_devices_and_publish(spotify),
     settings.spotify_background_poll_interval_seconds,
     error_handler=broker.mark_spotify_error,
-    interval_strategy=spotify.next_poll_interval,
+    interval_strategy=lambda interval: spotify.next_poll_interval(interval, group="devices"),
     idle_interval_seconds=settings.spotify_idle_poll_interval_seconds,
     active_strategy=has_active_consumers,
 )
 library_poller = PeriodicPoller(
     lambda: refresh_library_and_publish(spotify),
-    settings.spotify_background_poll_interval_seconds,
+    settings.spotify_playlist_poll_interval_seconds,
     error_handler=broker.mark_spotify_error,
-    interval_strategy=spotify.next_poll_interval,
+    interval_strategy=lambda interval: spotify.next_poll_interval(interval, group="playlists"),
     idle_interval_seconds=settings.spotify_idle_poll_interval_seconds,
     active_strategy=has_active_consumers,
 )
@@ -136,12 +136,21 @@ async def spotify_auth_not_configured_handler(_, exc: SpotifyAuthNotConfigured):
 async def health() -> dict[str, Any]:
     target = store.get_target_device()
     consumer_active = has_active_consumers()
-    playback_lower_bound = settings.poll_interval_seconds if consumer_active else settings.spotify_idle_poll_interval_seconds
-    background_lower_bound = (
-        settings.spotify_background_poll_interval_seconds
+    playback_lower_bound = (
+        settings.poll_interval_seconds
         if consumer_active
-        else settings.spotify_idle_poll_interval_seconds
+        else max(settings.poll_interval_seconds, settings.spotify_idle_poll_interval_seconds)
     )
+    background_lower_bound = (
+        settings.spotify_background_poll_interval_seconds if consumer_active else settings.spotify_idle_poll_interval_seconds
+    )
+    if not consumer_active:
+        background_lower_bound = max(settings.spotify_background_poll_interval_seconds, background_lower_bound)
+    playlist_lower_bound = (
+        settings.spotify_playlist_poll_interval_seconds if consumer_active else settings.spotify_idle_poll_interval_seconds
+    )
+    if not consumer_active:
+        playlist_lower_bound = max(settings.spotify_playlist_poll_interval_seconds, playlist_lower_bound)
     return {
         "ok": True,
         "spotify_configured": spotify.spotify_configured,
@@ -156,17 +165,29 @@ async def health() -> dict[str, Any]:
         "playlist_name_cache": playlist_name_cache.status(),
         "art_cache": art_cache.status(),
         "consumers": broker.consumer_status(ttl_seconds=settings.active_consumer_ttl_seconds),
-        "rate_limit": spotify.rate_limit_status(settings.poll_interval_seconds),
+        "rate_limit": spotify.rate_limit_statuses(
+            {
+                "playback": settings.poll_interval_seconds,
+                "devices": settings.spotify_background_poll_interval_seconds,
+                "playlists": settings.spotify_playlist_poll_interval_seconds,
+                "library": settings.spotify_playlist_poll_interval_seconds,
+                "commands": settings.poll_interval_seconds,
+                "other": settings.poll_interval_seconds,
+            }
+        ),
         "polling": {
             "mode": "active" if consumer_active else "idle",
             "active_consumers_detected": consumer_active,
             "playback_active_interval_seconds": settings.poll_interval_seconds,
             "idle_interval_seconds": settings.spotify_idle_poll_interval_seconds,
             "background_active_interval_seconds": settings.spotify_background_poll_interval_seconds,
+            "playlist_active_interval_seconds": settings.spotify_playlist_poll_interval_seconds,
             "playback_current_lower_bound_seconds": playback_lower_bound,
             "background_current_lower_bound_seconds": background_lower_bound,
-            "playback_effective_interval_seconds": spotify.next_poll_interval(playback_lower_bound),
-            "background_effective_interval_seconds": spotify.next_poll_interval(background_lower_bound),
+            "playlist_current_lower_bound_seconds": playlist_lower_bound,
+            "playback_effective_interval_seconds": spotify.next_poll_interval(playback_lower_bound, group="playback"),
+            "background_effective_interval_seconds": spotify.next_poll_interval(background_lower_bound, group="devices"),
+            "playlist_effective_interval_seconds": spotify.next_poll_interval(playlist_lower_bound, group="playlists"),
         },
         "mqtt_topics": broker.mqtt_topics() if settings.mqtt_enabled else None,
         "mqtt_availability": broker.last_mqtt_availability if settings.mqtt_enabled else None,
@@ -177,6 +198,24 @@ async def health() -> dict[str, Any]:
 @app.get("/v1/debug/requests")
 async def debug_requests(limit: int = Query(default=100, ge=0, le=1000)) -> dict[str, Any]:
     return telemetry.snapshot(periods_seconds=DEFAULT_PERIODS_SECONDS, recent_limit=limit)
+
+
+@app.get("/v1/debug/events")
+async def debug_events(
+    period: str = Query(default="1h"),
+    kind: str | None = None,
+    request_type: str | None = None,
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> dict[str, Any]:
+    return telemetry.events(
+        period_label=period,
+        kind=kind,
+        request_type=request_type,
+        limit=limit,
+        offset=offset,
+        periods_seconds=DEFAULT_PERIODS_SECONDS,
+    )
 
 
 @app.get("/v1/debug/status")
@@ -300,6 +339,27 @@ def debug_dashboard_html() -> str:
     .error {
       color: #ff8b8b;
     }
+    .clickable {
+      cursor: pointer;
+    }
+    .clickable:hover {
+      background: #1d2830;
+    }
+    .pager {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    pre {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      margin: 0;
+      max-height: 220px;
+      overflow: auto;
+      color: #d7ecff;
+    }
   </style>
 </head>
 <body>
@@ -350,17 +410,40 @@ def debug_dashboard_html() -> str:
       </div>
     </section>
 
-    <section class="panel" style="margin-top: 16px;">
-      <h2>Recent Events</h2>
+    <section class="panel" id="detailPanel" style="display: none; margin-top: 16px;">
+      <h2 id="detailTitle">Details</h2>
       <table>
-        <thead><tr><th>Time</th><th>Kind</th><th>Type</th><th>Status</th><th>Details</th></tr></thead>
+        <thead><tr><th>Time</th><th>Status</th><th>Code</th><th>Latency</th><th>Answer / Payload</th></tr></thead>
+        <tbody id="detailRows"></tbody>
+      </table>
+      <div class="pager">
+        <button id="detailPrev">Previous</button>
+        <div class="muted" id="detailPage"></div>
+        <button id="detailNext">Next</button>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-top: 16px;">
+      <h2 id="recentTitle">Recent Events</h2>
+      <table>
+        <thead><tr><th>Time</th><th>Kind</th><th>Type</th><th>Status</th><th>Details</th><th>Answer / Payload</th></tr></thead>
         <tbody id="recentRows"></tbody>
       </table>
+      <div class="pager">
+        <button id="recentPrev">Previous</button>
+        <div class="muted" id="recentPage"></div>
+        <button id="recentNext">Next</button>
+      </div>
     </section>
   </main>
   <script>
     let selectedPeriod = "1h";
     let latestPayload = null;
+    let recentOffset = 0;
+    const recentLimit = 25;
+    let detailFilter = null;
+    let detailOffset = 0;
+    const detailLimit = 25;
 
     function cell(text, className) {
       const td = document.createElement("td");
@@ -390,6 +473,9 @@ def debug_dashboard_html() -> str:
       }
       for (const [name, row] of entries) {
         const tr = document.createElement("tr");
+        tr.className = "clickable";
+        tr.title = "Open latest events for this type";
+        tr.onclick = () => openDetails(kind === "spotify" ? "spotify_api_request" : "mqtt_posting", name);
         tr.appendChild(codeCell(name));
         tr.appendChild(cell(row.count));
         tr.appendChild(cell(row.ok, row.ok ? "ok" : ""));
@@ -412,7 +498,8 @@ def debug_dashboard_html() -> str:
       document.getElementById("pollingMode").textContent = health.polling.mode;
       document.getElementById("pollingDetail").textContent =
         "Playback " + health.polling.playback_effective_interval_seconds + "s, background " +
-        health.polling.background_effective_interval_seconds + "s";
+        health.polling.background_effective_interval_seconds + "s, playlists " +
+        health.polling.playlist_effective_interval_seconds + "s";
       document.getElementById("consumersActive").textContent = health.polling.active_consumers_detected ? "active" : "idle";
       document.getElementById("consumersDetail").textContent =
         "WS " + health.consumers.websocket_count + ", MQTT " + (health.consumers.mqtt_active ? "active" : "inactive");
@@ -427,7 +514,11 @@ def debug_dashboard_html() -> str:
         button.className = label === selectedPeriod ? "active" : "";
         button.onclick = () => {
           selectedPeriod = label;
+          recentOffset = 0;
+          detailOffset = 0;
           render(latestPayload);
+          loadRecent();
+          if (detailFilter) loadDetails();
         };
         periods.appendChild(button);
       }
@@ -436,22 +527,91 @@ def debug_dashboard_html() -> str:
       renderRows(document.getElementById("spotifyRows"), period.spotify_api_requests, "spotify");
       renderRows(document.getElementById("mqttRows"), period.mqtt_postings, "mqtt");
 
+      loadRecent();
+    }
+
+    function eventDetails(event) {
+      const details = [];
+      if (event.status_code) details.push("status " + event.status_code);
+      if (event.latency_ms) details.push(Math.round(event.latency_ms) + "ms");
+      if (event.payload_bytes) details.push(event.payload_bytes + " bytes");
+      if (event.wait_seconds) details.push("wait " + event.wait_seconds + "s");
+      if (event.retry_after) details.push("retry-after " + event.retry_after);
+      if (event.error) details.push(event.error);
+      return details.join(", ");
+    }
+
+    function previewCell(event) {
+      const td = document.createElement("td");
+      const pre = document.createElement("pre");
+      pre.textContent = event.detail || "";
+      td.appendChild(pre);
+      return td;
+    }
+
+    async function fetchEvents({kind = null, requestType = null, offset = 0, limit = 25} = {}) {
+      const params = new URLSearchParams({period: selectedPeriod, offset, limit});
+      if (kind) params.set("kind", kind);
+      if (requestType) params.set("request_type", requestType);
+      const response = await fetch("/v1/debug/events?" + params.toString());
+      return await response.json();
+    }
+
+    async function loadRecent() {
+      const payload = await fetchEvents({offset: recentOffset, limit: recentLimit});
+      document.getElementById("recentTitle").textContent = "Recent Events (" + selectedPeriod + ")";
       const recent = document.getElementById("recentRows");
       recent.replaceChildren();
-      for (const event of payload.requests.recent) {
+      for (const event of payload.items) {
         const tr = document.createElement("tr");
         tr.appendChild(cell(new Date(event.at).toLocaleTimeString()));
         tr.appendChild(cell(event.kind));
         tr.appendChild(codeCell(event.request_type));
         tr.appendChild(cell(event.status, event.status === "error" ? "error" : event.status === "skipped" ? "warn" : "ok"));
-        const details = [];
-        if (event.status_code) details.push("status " + event.status_code);
-        if (event.latency_ms) details.push(Math.round(event.latency_ms) + "ms");
-        if (event.payload_bytes) details.push(event.payload_bytes + " bytes");
-        if (event.error) details.push(event.error);
-        tr.appendChild(cell(details.join(", ")));
+        tr.appendChild(cell(eventDetails(event)));
+        tr.appendChild(previewCell(event));
         recent.appendChild(tr);
       }
+      document.getElementById("recentPage").textContent = payload.total
+        ? (recentOffset + 1) + "-" + Math.min(recentOffset + recentLimit, payload.total) + " of " + payload.total
+        : "0 of 0";
+      document.getElementById("recentPrev").disabled = recentOffset === 0;
+      document.getElementById("recentNext").disabled = payload.next_offset == null;
+    }
+
+    async function openDetails(kind, requestType) {
+      detailFilter = {kind, requestType};
+      detailOffset = 0;
+      await loadDetails();
+    }
+
+    async function loadDetails() {
+      if (!detailFilter) return;
+      const payload = await fetchEvents({
+        kind: detailFilter.kind,
+        requestType: detailFilter.requestType,
+        offset: detailOffset,
+        limit: detailLimit
+      });
+      document.getElementById("detailPanel").style.display = "block";
+      document.getElementById("detailTitle").textContent =
+        detailFilter.kind + " / " + detailFilter.requestType + " (" + selectedPeriod + ")";
+      const rows = document.getElementById("detailRows");
+      rows.replaceChildren();
+      for (const event of payload.items) {
+        const tr = document.createElement("tr");
+        tr.appendChild(cell(new Date(event.at).toLocaleString()));
+        tr.appendChild(cell(event.status, event.status === "error" ? "error" : event.status === "skipped" ? "warn" : "ok"));
+        tr.appendChild(cell(event.status_code || "-"));
+        tr.appendChild(cell(event.latency_ms ? Math.round(event.latency_ms) + "ms" : "-"));
+        tr.appendChild(previewCell(event));
+        rows.appendChild(tr);
+      }
+      document.getElementById("detailPage").textContent = payload.total
+        ? (detailOffset + 1) + "-" + Math.min(detailOffset + detailLimit, payload.total) + " of " + payload.total
+        : "0 of 0";
+      document.getElementById("detailPrev").disabled = detailOffset === 0;
+      document.getElementById("detailNext").disabled = payload.next_offset == null;
     }
 
     async function refresh() {
@@ -460,6 +620,22 @@ def debug_dashboard_html() -> str:
     }
 
     document.getElementById("refresh").onclick = refresh;
+    document.getElementById("recentPrev").onclick = () => {
+      recentOffset = Math.max(0, recentOffset - recentLimit);
+      loadRecent();
+    };
+    document.getElementById("recentNext").onclick = () => {
+      recentOffset += recentLimit;
+      loadRecent();
+    };
+    document.getElementById("detailPrev").onclick = () => {
+      detailOffset = Math.max(0, detailOffset - detailLimit);
+      loadDetails();
+    };
+    document.getElementById("detailNext").onclick = () => {
+      detailOffset += detailLimit;
+      loadDetails();
+    };
     refresh();
     setInterval(refresh, 10000);
   </script>

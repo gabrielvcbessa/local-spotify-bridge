@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
+import json
 from threading import Lock
 from time import time
 from typing import Any
@@ -34,6 +35,7 @@ class TelemetryEvent:
     wait_seconds: float | None = None
     retry_after: str | None = None
     error: str | None = None
+    detail: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -64,6 +66,7 @@ class BridgeTelemetry:
         wait_seconds: float,
         retry_after: str | None,
         error: str | None = None,
+        detail: str | None = None,
     ) -> None:
         status = "ok" if status_code is not None and 200 <= status_code < 400 and error is None else "error"
         self._append(
@@ -78,6 +81,7 @@ class BridgeTelemetry:
                 wait_seconds=wait_seconds,
                 retry_after=retry_after,
                 error=error,
+                detail=truncate_detail(detail),
             )
         )
 
@@ -91,6 +95,7 @@ class BridgeTelemetry:
         qos: int,
         published: bool,
         skipped_reason: str | None = None,
+        detail: str | None = None,
     ) -> None:
         self._append(
             TelemetryEvent(
@@ -103,6 +108,7 @@ class BridgeTelemetry:
                 retain=retain,
                 qos=qos,
                 error=skipped_reason,
+                detail=truncate_detail(detail),
             )
         )
 
@@ -128,6 +134,44 @@ class BridgeTelemetry:
                 for label, seconds in periods.items()
             },
             "recent": [event.to_dict() for event in events[-recent_limit:]][::-1],
+        }
+
+    def events(
+        self,
+        *,
+        period_label: str = "1h",
+        kind: str | None = None,
+        request_type: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+        periods_seconds: dict[str, int] | None = None,
+    ) -> dict[str, Any]:
+        periods = periods_seconds or DEFAULT_PERIODS_SECONDS
+        now = time()
+        cutoff = now - periods.get(period_label, periods["1h"])
+        with self._lock:
+            self._prune_locked(now)
+            filtered = [
+                event
+                for event in self._events
+                if event.ts >= cutoff
+                and (kind is None or event.kind == kind)
+                and (request_type is None or event.request_type == request_type)
+            ]
+
+        ordered = list(reversed(filtered))
+        page = ordered[offset : offset + limit]
+        return {
+            "ok": True,
+            "generated_at": datetime.fromtimestamp(now, UTC).isoformat(),
+            "period": period_label,
+            "kind": kind,
+            "request_type": request_type,
+            "total": len(ordered),
+            "limit": limit,
+            "offset": offset,
+            "next_offset": offset + limit if offset + limit < len(ordered) else None,
+            "items": [event.to_dict() for event in page],
         }
 
     def _append(self, event: TelemetryEvent) -> None:
@@ -213,3 +257,16 @@ class BridgeTelemetry:
 
 
 telemetry = BridgeTelemetry()
+
+
+def truncate_detail(value: Any, max_chars: int = 2000) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        try:
+            value = json.dumps(value, sort_keys=True, ensure_ascii=True)
+        except TypeError:
+            value = str(value)
+    if len(value) <= max_chars:
+        return value
+    return f"{value[:max_chars]}... [truncated {len(value) - max_chars} chars]"

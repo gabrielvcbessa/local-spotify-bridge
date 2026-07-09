@@ -166,6 +166,20 @@ def test_periodic_poller_uses_shared_idle_interval_when_no_consumers_are_active(
     assert poller._next_interval_seconds() == 30
 
 
+def test_periodic_poller_idle_interval_does_not_go_below_active_base():
+    async def task():
+        return None
+
+    poller = PeriodicPoller(
+        task,
+        7200,
+        idle_interval_seconds=300,
+        active_strategy=lambda: False,
+    )
+
+    assert poller._next_interval_seconds() == 7200
+
+
 @pytest.mark.asyncio
 async def test_spotify_client_records_retry_after_from_429():
     requests: list[str] = []
@@ -192,5 +206,65 @@ async def test_spotify_client_records_retry_after_from_429():
     assert status["last_retry_after_seconds"] == 5
     assert status["retry_after_remaining_seconds"] > 4
     assert any("api.spotify.com" in request for request in requests)
+
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_spotify_playlist_429_does_not_block_playback_refresh(monkeypatch):
+    requests: list[str] = []
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds: float):
+        sleeps.append(seconds)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(str(request.url))
+        if request.url.host == "accounts.spotify.com":
+            return httpx.Response(200, json={"access_token": "token", "expires_in": 3600})
+        if request.url.path == "/v1/me/playlists":
+            return httpx.Response(429, headers={"Retry-After": "600"}, json={"error": "playlist limited"})
+        if request.url.path == "/v1/me/player":
+            return httpx.Response(
+                200,
+                json={
+                    "is_playing": True,
+                    "progress_ms": 1000,
+                    "item": {
+                        "id": "track-1",
+                        "uri": "spotify:track:track-1",
+                        "type": "track",
+                        "name": "Song",
+                        "duration_ms": 180000,
+                        "artists": [],
+                        "album": {"name": "Album", "images": []},
+                    },
+                    "device": {"id": "device-1", "name": "Speaker", "supports_volume": True},
+                },
+            )
+        return httpx.Response(404)
+
+    monkeypatch.setattr("app.spotify.asyncio.sleep", fake_sleep)
+    client = SpotifyClient(
+        Settings(
+            SPOTIFY_CLIENT_ID="client",
+            SPOTIFY_CLIENT_SECRET="secret",
+            SPOTIFY_REFRESH_TOKEN="refresh",
+            SPOTIFY_PRELOAD_NEXT_ENABLED=False,
+        ),
+        http=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await client.playlists(limit=1, offset=0)
+
+    state = await client.current_playback()
+
+    assert state is not None
+    assert state.title == "Song"
+    assert sleeps == []
+    assert client.rate_limit_status(5, group="playlists")["retry_after_remaining_seconds"] > 500
+    assert client.rate_limit_status(5, group="playback")["retry_after_remaining_seconds"] == 0
+    assert any("/v1/me/player" in request for request in requests)
 
     await client.close()

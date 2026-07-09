@@ -348,6 +348,7 @@ class ConnectionBroker:
                 retain=False,
                 qos=self._settings.mqtt_qos,
                 published=True,
+                detail=text,
             )
 
     async def publish_mqtt_retained(self, topic_key: str, payload: dict[str, Any]) -> None:
@@ -376,6 +377,7 @@ class ConnectionBroker:
                     qos=self._settings.mqtt_qos,
                     published=False,
                     skipped_reason="duplicate_retained_payload",
+                    detail=text,
                 )
                 return False
             self._mqtt_payload_fingerprints[topic] = fingerprint
@@ -388,6 +390,7 @@ class ConnectionBroker:
             retain=retain,
             qos=self._settings.mqtt_qos,
             published=True,
+            detail=text,
         )
         return True
 
@@ -406,6 +409,7 @@ class ConnectionBroker:
                     qos=self._settings.mqtt_qos,
                     published=False,
                     skipped_reason="duplicate_retained_payload",
+                    detail=f"<{len(payload)} binary bytes sha256={hashlib.sha256(payload).hexdigest()}>",
                 )
                 return False
             self._mqtt_payload_fingerprints[topic] = fingerprint
@@ -418,6 +422,7 @@ class ConnectionBroker:
             retain=retain,
             qos=self._settings.mqtt_qos,
             published=True,
+            detail=f"<{len(payload)} binary bytes sha256={hashlib.sha256(payload).hexdigest()}>",
         )
         return True
 
@@ -640,7 +645,7 @@ class StatePoller:
             consumers_active = True
         else:
             consumers_active = self._active_strategy()
-            interval = self._interval_seconds if consumers_active else self._idle_interval_seconds
+            interval = self._interval_seconds if consumers_active else max(self._interval_seconds, self._idle_interval_seconds)
         if consumers_active:
             interval = min(interval, self._track_end_interval_seconds() or interval)
         return interval
@@ -716,4 +721,4 @@ class PeriodicPoller:
     def _base_interval_seconds(self) -> float:
         if self._idle_interval_seconds is None or self._active_strategy is None:
             return self._interval_seconds
-        return self._interval_seconds if self._active_strategy() else self._idle_interval_seconds
+        return self._interval_seconds if self._active_strategy() else max(self._interval_seconds, self._idle_interval_seconds)

@@ -22,6 +22,15 @@ class SpotifyAuthNotConfigured(RuntimeError):
     pass
 
 
+def response_preview(response: httpx.Response | None) -> str | None:
+    if response is None or not response.content:
+        return None
+    try:
+        return response.text
+    except Exception:
+        return f"<{len(response.content)} binary bytes>"
+
+
 class SpotifyClient:
     def __init__(
         self,
@@ -34,7 +43,8 @@ class SpotifyClient:
         self._http = http or httpx.AsyncClient(timeout=20)
         self._access_token: str | None = None
         self._token_expires_at = 0.0
-        self._rate_limiter = SpotifyRateLimiter(
+        self._rate_limiters: dict[str, SpotifyRateLimiter] = {}
+        self._default_rate_limiter = SpotifyRateLimiter(
             window_seconds=settings.spotify_rate_limit_window_seconds,
             soft_requests_per_window=settings.spotify_rate_limit_soft_requests_per_window,
             soft_ratio=settings.spotify_rate_limit_soft_ratio,
@@ -85,11 +95,22 @@ class SpotifyClient:
     def spotify_configured(self) -> bool:
         return bool(self._settings.spotify_auth_configured and self.refresh_token)
 
-    def next_poll_interval(self, base_interval_seconds: float) -> float:
-        return self._rate_limiter.poll_interval(base_interval_seconds)
+    def next_poll_interval(self, base_interval_seconds: float, group: str = "playback") -> float:
+        return self._rate_limiter_for(group).poll_interval(base_interval_seconds)
 
-    def rate_limit_status(self, base_poll_interval_seconds: float) -> dict[str, object]:
-        return self._rate_limiter.status(base_poll_interval_seconds)
+    def rate_limit_status(self, base_poll_interval_seconds: float, group: str = "playback") -> dict[str, object]:
+        status = self._rate_limiter_for(group).status(base_poll_interval_seconds)
+        status["group"] = group
+        return status
+
+    def rate_limit_statuses(self, base_poll_interval_seconds_by_group: dict[str, float]) -> dict[str, object]:
+        groups = {
+            group: self.rate_limit_status(base_interval, group)
+            for group, base_interval in base_poll_interval_seconds_by_group.items()
+        }
+        playback = groups.get("playback", self.rate_limit_status(0, "playback")).copy()
+        playback["groups"] = groups
+        return playback
 
     def authorize_url(self, state: str | None = None) -> str:
         if not self._settings.spotify_auth_configured:
@@ -142,10 +163,12 @@ class SpotifyClient:
     ) -> Any:
         expected = expected_statuses or {200}
         token = await self._token()
-        wait_seconds = self._rate_limiter.wait_seconds()
+        group = self._rate_limit_group(method, path)
+        limiter = self._rate_limiter_for(group)
+        wait_seconds = limiter.wait_seconds()
         if wait_seconds > 0:
             await asyncio.sleep(wait_seconds)
-        self._rate_limiter.record_request()
+        limiter.record_request()
         started_at = perf_counter()
         response: httpx.Response | None = None
         error: str | None = None
@@ -157,7 +180,7 @@ class SpotifyClient:
                 params=params,
                 json=json,
             )
-            self._rate_limiter.record_response(
+            limiter.record_response(
                 response.status_code,
                 response.headers.get("Retry-After"),
             )
@@ -178,7 +201,35 @@ class SpotifyClient:
                 wait_seconds=wait_seconds,
                 retry_after=response.headers.get("Retry-After") if response is not None else None,
                 error=error,
+                detail=response_preview(response),
             )
+
+    def _rate_limiter_for(self, group: str) -> SpotifyRateLimiter:
+        if group not in self._rate_limiters:
+            self._rate_limiters[group] = SpotifyRateLimiter(
+                window_seconds=self._default_rate_limiter.window_seconds,
+                soft_requests_per_window=self._default_rate_limiter.soft_requests_per_window,
+                soft_ratio=self._default_rate_limiter.soft_ratio,
+                backoff_multiplier=self._default_rate_limiter.backoff_multiplier,
+                max_poll_interval_seconds=self._default_rate_limiter.max_poll_interval_seconds,
+                retry_after_padding_seconds=self._default_rate_limiter.retry_after_padding_seconds,
+            )
+        return self._rate_limiters[group]
+
+    @staticmethod
+    def _rate_limit_group(method: str, path: str) -> str:
+        normalized_method = method.upper()
+        if path == "/me/player/devices":
+            return "devices"
+        if path == "/me/playlists" or path.startswith("/playlists/"):
+            return "playlists"
+        if path == "/me/tracks":
+            return "library"
+        if normalized_method != "GET":
+            return "commands"
+        if path == "/me/player" or path == "/me/player/queue":
+            return "playback"
+        return "other"
 
     async def current_playback(self) -> PlaybackSnapshot | None:
         payload = await self.request("GET", "/me/player", expected_statuses={200, 204})
