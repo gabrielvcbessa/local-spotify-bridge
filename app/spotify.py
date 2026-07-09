@@ -1,6 +1,7 @@
 import base64
 import asyncio
 import time
+from time import perf_counter
 from typing import Any
 from urllib.parse import urlencode
 
@@ -10,6 +11,7 @@ from .config import Settings
 from .models import CompactLibraryItem, CompactPage, PlaybackSnapshot
 from .rate_limit import SpotifyRateLimiter
 from .store import RuntimeStore, TargetDevice
+from .telemetry import telemetry
 
 
 class SpotifyNotConfigured(RuntimeError):
@@ -144,22 +146,39 @@ class SpotifyClient:
         if wait_seconds > 0:
             await asyncio.sleep(wait_seconds)
         self._rate_limiter.record_request()
-        response = await self._http.request(
-            method,
-            f"https://api.spotify.com/v1{path}",
-            headers={"Authorization": f"Bearer {token}"},
-            params=params,
-            json=json,
-        )
-        self._rate_limiter.record_response(
-            response.status_code,
-            response.headers.get("Retry-After"),
-        )
-        if response.status_code not in expected:
-            response.raise_for_status()
-        if response.status_code == 204 or not response.content:
-            return None
-        return response.json()
+        started_at = perf_counter()
+        response: httpx.Response | None = None
+        error: str | None = None
+        try:
+            response = await self._http.request(
+                method,
+                f"https://api.spotify.com/v1{path}",
+                headers={"Authorization": f"Bearer {token}"},
+                params=params,
+                json=json,
+            )
+            self._rate_limiter.record_response(
+                response.status_code,
+                response.headers.get("Retry-After"),
+            )
+            if response.status_code not in expected:
+                response.raise_for_status()
+            if response.status_code == 204 or not response.content:
+                return None
+            return response.json()
+        except Exception as exc:
+            error = str(exc)
+            raise
+        finally:
+            telemetry.record_spotify_api(
+                method=method,
+                path=path,
+                status_code=response.status_code if response is not None else None,
+                latency_ms=(perf_counter() - started_at) * 1000,
+                wait_seconds=wait_seconds,
+                retry_after=response.headers.get("Retry-After") if response is not None else None,
+                error=error,
+            )
 
     async def current_playback(self) -> PlaybackSnapshot | None:
         payload = await self.request("GET", "/me/player", expected_statuses={200, 204})

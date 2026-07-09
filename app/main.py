@@ -4,7 +4,7 @@ from io import BytesIO
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from PIL import Image
 
 from .art import ArtCache, ArtOptions, art_version, bytes_hash, color_bar_test_pattern_rgb565, display_ready_rgb565, image_to_rgb565
@@ -22,9 +22,14 @@ from .spotify import (
     compact_tracks,
 )
 from .store import RuntimeStore, TargetDevice
+from .telemetry import DEFAULT_PERIODS_SECONDS, telemetry
 
 
 settings = get_settings()
+telemetry.configure(
+    max_events=settings.debug_telemetry_max_events,
+    retention_seconds=settings.debug_telemetry_retention_seconds,
+)
 store = RuntimeStore(settings)
 spotify = SpotifyClient(settings, store)
 broker = ConnectionBroker(settings)
@@ -130,6 +135,13 @@ async def spotify_auth_not_configured_handler(_, exc: SpotifyAuthNotConfigured):
 @app.get("/health")
 async def health() -> dict[str, Any]:
     target = store.get_target_device()
+    consumer_active = has_active_consumers()
+    playback_lower_bound = settings.poll_interval_seconds if consumer_active else settings.spotify_idle_poll_interval_seconds
+    background_lower_bound = (
+        settings.spotify_background_poll_interval_seconds
+        if consumer_active
+        else settings.spotify_idle_poll_interval_seconds
+    )
     return {
         "ok": True,
         "spotify_configured": spotify.spotify_configured,
@@ -146,14 +158,313 @@ async def health() -> dict[str, Any]:
         "consumers": broker.consumer_status(ttl_seconds=settings.active_consumer_ttl_seconds),
         "rate_limit": spotify.rate_limit_status(settings.poll_interval_seconds),
         "polling": {
+            "mode": "active" if consumer_active else "idle",
+            "active_consumers_detected": consumer_active,
             "playback_active_interval_seconds": settings.poll_interval_seconds,
             "idle_interval_seconds": settings.spotify_idle_poll_interval_seconds,
             "background_active_interval_seconds": settings.spotify_background_poll_interval_seconds,
+            "playback_current_lower_bound_seconds": playback_lower_bound,
+            "background_current_lower_bound_seconds": background_lower_bound,
+            "playback_effective_interval_seconds": spotify.next_poll_interval(playback_lower_bound),
+            "background_effective_interval_seconds": spotify.next_poll_interval(background_lower_bound),
         },
         "mqtt_topics": broker.mqtt_topics() if settings.mqtt_enabled else None,
         "mqtt_availability": broker.last_mqtt_availability if settings.mqtt_enabled else None,
         "mqtt_availability_at": broker.last_mqtt_availability_at if settings.mqtt_enabled else None,
     }
+
+
+@app.get("/v1/debug/requests")
+async def debug_requests(limit: int = Query(default=100, ge=0, le=1000)) -> dict[str, Any]:
+    return telemetry.snapshot(periods_seconds=DEFAULT_PERIODS_SECONDS, recent_limit=limit)
+
+
+@app.get("/v1/debug/status")
+async def debug_status(limit: int = Query(default=50, ge=0, le=500)) -> dict[str, Any]:
+    return {
+        "health": await health(),
+        "requests": telemetry.snapshot(periods_seconds=DEFAULT_PERIODS_SECONDS, recent_limit=limit),
+    }
+
+
+@app.get("/debug", response_class=HTMLResponse)
+async def debug_dashboard() -> HTMLResponse:
+    return HTMLResponse(debug_dashboard_html())
+
+
+def debug_dashboard_html() -> str:
+    return """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Local Spotify Bridge Debug</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #101418;
+      color: #e7ecef;
+    }
+    body {
+      margin: 0;
+      background: #101418;
+    }
+    main {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+    header {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+    h1 {
+      font-size: 24px;
+      margin: 0 0 4px;
+      letter-spacing: 0;
+    }
+    .muted {
+      color: #9da8af;
+      font-size: 13px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .panel {
+      border: 1px solid #29333b;
+      background: #161d23;
+      border-radius: 8px;
+      padding: 14px;
+    }
+    .panel h2 {
+      margin: 0 0 10px;
+      font-size: 15px;
+      letter-spacing: 0;
+    }
+    .metric {
+      font-size: 26px;
+      line-height: 1.2;
+      font-weight: 650;
+    }
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+    button {
+      background: #22303a;
+      color: #e7ecef;
+      border: 1px solid #354652;
+      border-radius: 6px;
+      padding: 8px 10px;
+      cursor: pointer;
+    }
+    button.active {
+      background: #2b6f61;
+      border-color: #3f9f8d;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th, td {
+      border-bottom: 1px solid #29333b;
+      padding: 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      color: #b9c5cc;
+      font-weight: 600;
+    }
+    code {
+      color: #d7ecff;
+      overflow-wrap: anywhere;
+    }
+    .ok {
+      color: #7fd4a8;
+    }
+    .warn {
+      color: #f3c969;
+    }
+    .error {
+      color: #ff8b8b;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Local Spotify Bridge Debug</h1>
+        <div class="muted" id="updated">Loading...</div>
+      </div>
+      <button id="refresh">Refresh</button>
+    </header>
+
+    <section class="grid">
+      <div class="panel">
+        <h2>Polling Mode</h2>
+        <div class="metric" id="pollingMode">-</div>
+        <div class="muted" id="pollingDetail"></div>
+      </div>
+      <div class="panel">
+        <h2>Consumers</h2>
+        <div class="metric" id="consumersActive">-</div>
+        <div class="muted" id="consumersDetail"></div>
+      </div>
+      <div class="panel">
+        <h2>Stored Events</h2>
+        <div class="metric" id="storedEvents">-</div>
+        <div class="muted" id="retention"></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="toolbar" id="periods"></div>
+      <div class="grid">
+        <div>
+          <h2>Spotify API Requests</h2>
+          <table>
+            <thead><tr><th>Type</th><th>Count</th><th>OK</th><th>Errors</th><th>Avg ms</th><th>Last</th></tr></thead>
+            <tbody id="spotifyRows"></tbody>
+          </table>
+        </div>
+        <div>
+          <h2>MQTT Postings</h2>
+          <table>
+            <thead><tr><th>Topic</th><th>Count</th><th>Published</th><th>Skipped</th><th>Last</th></tr></thead>
+            <tbody id="mqttRows"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-top: 16px;">
+      <h2>Recent Events</h2>
+      <table>
+        <thead><tr><th>Time</th><th>Kind</th><th>Type</th><th>Status</th><th>Details</th></tr></thead>
+        <tbody id="recentRows"></tbody>
+      </table>
+    </section>
+  </main>
+  <script>
+    let selectedPeriod = "1h";
+    let latestPayload = null;
+
+    function cell(text, className) {
+      const td = document.createElement("td");
+      if (className) td.className = className;
+      td.textContent = text == null ? "-" : String(text);
+      return td;
+    }
+
+    function codeCell(text) {
+      const td = document.createElement("td");
+      const code = document.createElement("code");
+      code.textContent = text == null ? "-" : String(text);
+      td.appendChild(code);
+      return td;
+    }
+
+    function renderRows(target, data, kind) {
+      target.replaceChildren();
+      const entries = Object.entries(data.by_type || {});
+      if (!entries.length) {
+        const tr = document.createElement("tr");
+        const td = cell("No events in this period");
+        td.colSpan = kind === "spotify" ? 6 : 5;
+        tr.appendChild(td);
+        target.appendChild(tr);
+        return;
+      }
+      for (const [name, row] of entries) {
+        const tr = document.createElement("tr");
+        tr.appendChild(codeCell(name));
+        tr.appendChild(cell(row.count));
+        tr.appendChild(cell(row.ok, row.ok ? "ok" : ""));
+        if (kind === "spotify") {
+          tr.appendChild(cell(row.errors, row.errors ? "error" : ""));
+          tr.appendChild(cell(row.avg_latency_ms));
+          tr.appendChild(cell(row.last_status_code || row.last_status || "-"));
+        } else {
+          tr.appendChild(cell(row.skipped, row.skipped ? "warn" : ""));
+          tr.appendChild(cell(row.last_status || "-"));
+        }
+        target.appendChild(tr);
+      }
+    }
+
+    function render(payload) {
+      latestPayload = payload;
+      document.getElementById("updated").textContent = "Updated " + new Date(payload.requests.generated_at).toLocaleString();
+      const health = payload.health;
+      document.getElementById("pollingMode").textContent = health.polling.mode;
+      document.getElementById("pollingDetail").textContent =
+        "Playback " + health.polling.playback_effective_interval_seconds + "s, background " +
+        health.polling.background_effective_interval_seconds + "s";
+      document.getElementById("consumersActive").textContent = health.polling.active_consumers_detected ? "active" : "idle";
+      document.getElementById("consumersDetail").textContent =
+        "WS " + health.consumers.websocket_count + ", MQTT " + (health.consumers.mqtt_active ? "active" : "inactive");
+      document.getElementById("storedEvents").textContent = payload.requests.stored_events;
+      document.getElementById("retention").textContent = "Retention " + Math.round(payload.requests.retention_seconds / 3600) + "h";
+
+      const periods = document.getElementById("periods");
+      periods.replaceChildren();
+      for (const label of Object.keys(payload.requests.periods)) {
+        const button = document.createElement("button");
+        button.textContent = label;
+        button.className = label === selectedPeriod ? "active" : "";
+        button.onclick = () => {
+          selectedPeriod = label;
+          render(latestPayload);
+        };
+        periods.appendChild(button);
+      }
+
+      const period = payload.requests.periods[selectedPeriod] || payload.requests.periods["1h"];
+      renderRows(document.getElementById("spotifyRows"), period.spotify_api_requests, "spotify");
+      renderRows(document.getElementById("mqttRows"), period.mqtt_postings, "mqtt");
+
+      const recent = document.getElementById("recentRows");
+      recent.replaceChildren();
+      for (const event of payload.requests.recent) {
+        const tr = document.createElement("tr");
+        tr.appendChild(cell(new Date(event.at).toLocaleTimeString()));
+        tr.appendChild(cell(event.kind));
+        tr.appendChild(codeCell(event.request_type));
+        tr.appendChild(cell(event.status, event.status === "error" ? "error" : event.status === "skipped" ? "warn" : "ok"));
+        const details = [];
+        if (event.status_code) details.push("status " + event.status_code);
+        if (event.latency_ms) details.push(Math.round(event.latency_ms) + "ms");
+        if (event.payload_bytes) details.push(event.payload_bytes + " bytes");
+        if (event.error) details.push(event.error);
+        tr.appendChild(cell(details.join(", ")));
+        recent.appendChild(tr);
+      }
+    }
+
+    async function refresh() {
+      const response = await fetch("/v1/debug/status?limit=100");
+      render(await response.json());
+    }
+
+    document.getElementById("refresh").onclick = refresh;
+    refresh();
+    setInterval(refresh, 10000);
+  </script>
+</body>
+</html>"""
 
 
 @app.get("/v1/auth/login")

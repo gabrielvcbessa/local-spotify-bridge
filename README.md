@@ -152,6 +152,10 @@ updates only when their semantic payload changes. If Spotify returns `429` with 
 header, future API calls wait for that window and every poller backs off until the retry window
 clears.
 
+`/health.polling` reports whether the bridge currently detects active consumers and which active or
+idle lower bounds are being used. That makes it easy to confirm whether the bridge is in fast
+knob-facing mode or quiet idle mode.
+
 Useful tuning settings:
 
 ```dotenv
@@ -159,6 +163,8 @@ POLL_INTERVAL_SECONDS=3
 SPOTIFY_BACKGROUND_POLL_INTERVAL_SECONDS=30
 SPOTIFY_IDLE_POLL_INTERVAL_SECONDS=300
 ACTIVE_CONSUMER_TTL_SECONDS=120
+DEBUG_TELEMETRY_MAX_EVENTS=50000
+DEBUG_TELEMETRY_RETENTION_SECONDS=604800
 SPOTIFY_RATE_LIMIT_WINDOW_SECONDS=30
 SPOTIFY_RATE_LIMIT_SOFT_REQUESTS_PER_WINDOW=20
 SPOTIFY_RATE_LIMIT_SOFT_RATIO=0.8
@@ -182,6 +188,31 @@ consumer is active, `SPOTIFY_IDLE_POLL_INTERVAL_SECONDS` remains the lower bound
 poll interval, and any active `Retry-After` wait. Spotify does not publish one universal numeric
 quota for every app, so treat `SPOTIFY_RATE_LIMIT_SOFT_REQUESTS_PER_WINDOW` as a conservative local
 pressure threshold and tune it if `/health.rate_limit.near_threshold` is frequently true.
+
+## Debug Dashboard
+
+The bridge includes a local dashboard for request visibility:
+
+```text
+GET /debug
+GET /v1/debug/status
+GET /v1/debug/requests
+```
+
+`/debug` is a browser page for local operations. It shows the current polling mode, detected
+consumers, recent events, and grouped counts for these periods: `1h`, `3h`, `6h`, `12h`, `1d`,
+`3d`, and `7d`.
+
+The dashboard records two log streams:
+
+- `spotify_api_request`: actual Spotify Web API calls by method and endpoint, including status,
+  latency, errors, `Retry-After`, and rate-limit wait time.
+- `mqtt_posting`: MQTT publish attempts by topic, including retained duplicate skips, payload size,
+  QoS, and retain flag.
+
+Telemetry is in-memory and private to the bridge process. `DEBUG_TELEMETRY_MAX_EVENTS` caps the ring
+buffer size and `DEBUG_TELEMETRY_RETENTION_SECONDS` controls how long events stay available. The
+defaults keep up to 50,000 events for 7 days.
 
 ## REST API
 

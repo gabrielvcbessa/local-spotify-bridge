@@ -61,6 +61,8 @@ class Settings(BaseSettings):
         alias="COMMAND_FOLLOWUP_REFRESH_DELAYS_SECONDS",
     )
     state_change_progress_drift_ms: int = Field(default=5000, alias="STATE_CHANGE_PROGRESS_DRIFT_MS")
+    debug_telemetry_max_events: int = Field(default=50000, alias="DEBUG_TELEMETRY_MAX_EVENTS")
+    debug_telemetry_retention_seconds: int = Field(default=604800, alias="DEBUG_TELEMETRY_RETENTION_SECONDS")
 
     mqtt_enabled: bool = Field(default=False, alias="MQTT_ENABLED")
     mqtt_host: str = Field(default="localhost", alias="MQTT_HOST")

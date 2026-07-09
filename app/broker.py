@@ -10,6 +10,7 @@ from fastapi import WebSocket
 
 from .config import Settings
 from .models import PlaybackSnapshot, StateEnvelope
+from .telemetry import telemetry
 
 try:
     import paho.mqtt.client as mqtt
@@ -333,11 +334,20 @@ class ConnectionBroker:
             response = {"ok": False, "error": str(exc)}
 
         if self._mqtt_client is not None:
+            text = json.dumps(response)
             self._mqtt_client.publish(
                 result_topic,
-                json.dumps(response),
+                text,
                 qos=self._settings.mqtt_qos,
                 retain=False,
+            )
+            telemetry.record_mqtt_publish(
+                topic=result_topic,
+                payload_kind="json",
+                payload_bytes=len(text.encode()),
+                retain=False,
+                qos=self._settings.mqtt_qos,
+                published=True,
             )
 
     async def publish_mqtt_retained(self, topic_key: str, payload: dict[str, Any]) -> None:
@@ -358,10 +368,27 @@ class ConnectionBroker:
         if retain:
             fingerprint = mqtt_payload_fingerprint(payload)
             if self._mqtt_payload_fingerprints.get(topic) == fingerprint:
+                telemetry.record_mqtt_publish(
+                    topic=topic,
+                    payload_kind="json",
+                    payload_bytes=len(text.encode()),
+                    retain=retain,
+                    qos=self._settings.mqtt_qos,
+                    published=False,
+                    skipped_reason="duplicate_retained_payload",
+                )
                 return False
             self._mqtt_payload_fingerprints[topic] = fingerprint
 
         self._mqtt_client.publish(topic, text, qos=self._settings.mqtt_qos, retain=retain)
+        telemetry.record_mqtt_publish(
+            topic=topic,
+            payload_kind="json",
+            payload_bytes=len(text.encode()),
+            retain=retain,
+            qos=self._settings.mqtt_qos,
+            published=True,
+        )
         return True
 
     def _publish_mqtt_bytes(self, topic: str, payload: bytes, *, retain: bool) -> bool:
@@ -371,10 +398,27 @@ class ConnectionBroker:
         if retain:
             fingerprint = f"bytes:{hashlib.sha256(payload).hexdigest()}"
             if self._mqtt_payload_fingerprints.get(topic) == fingerprint:
+                telemetry.record_mqtt_publish(
+                    topic=topic,
+                    payload_kind="bytes",
+                    payload_bytes=len(payload),
+                    retain=retain,
+                    qos=self._settings.mqtt_qos,
+                    published=False,
+                    skipped_reason="duplicate_retained_payload",
+                )
                 return False
             self._mqtt_payload_fingerprints[topic] = fingerprint
 
         self._mqtt_client.publish(topic, payload, qos=self._settings.mqtt_qos, retain=retain)
+        telemetry.record_mqtt_publish(
+            topic=topic,
+            payload_kind="bytes",
+            payload_bytes=len(payload),
+            retain=retain,
+            qos=self._settings.mqtt_qos,
+            published=True,
+        )
         return True
 
 
