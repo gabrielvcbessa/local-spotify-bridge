@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -336,3 +337,25 @@ async def test_mqtt_availability_is_recorded_without_command_result():
     assert broker.last_mqtt_availability == {"online": True}
     assert broker.last_mqtt_availability_at is not None
     assert mqtt.published == []
+
+
+def test_broker_active_consumers_uses_recent_mqtt_availability():
+    broker = ConnectionBroker(Settings())
+    broker.last_mqtt_availability = {"online": True}
+    broker.last_mqtt_availability_at = datetime.now(UTC).isoformat()
+
+    assert broker.has_active_consumers(ttl_seconds=120)
+    assert broker.consumer_status(ttl_seconds=120)["mqtt_active"] is True
+
+
+def test_broker_active_consumers_ignores_stale_or_offline_mqtt_availability():
+    broker = ConnectionBroker(Settings())
+    broker.last_mqtt_availability = {"online": True}
+    broker.last_mqtt_availability_at = (datetime.now(UTC) - timedelta(seconds=300)).isoformat()
+
+    assert not broker.has_active_consumers(ttl_seconds=120)
+
+    broker.last_mqtt_availability = {"online": False}
+    broker.last_mqtt_availability_at = datetime.now(UTC).isoformat()
+
+    assert not broker.has_active_consumers(ttl_seconds=120)

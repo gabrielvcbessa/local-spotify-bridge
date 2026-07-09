@@ -120,6 +120,37 @@ class ConnectionBroker:
     def version(self) -> int:
         return self._version
 
+    @property
+    def websocket_count(self) -> int:
+        return len(self._websockets)
+
+    def has_active_consumers(self, *, ttl_seconds: float) -> bool:
+        if self.websocket_count > 0:
+            return True
+        return self.mqtt_availability_is_active(ttl_seconds=ttl_seconds)
+
+    def mqtt_availability_is_active(self, *, ttl_seconds: float) -> bool:
+        if self.last_mqtt_availability_at is None:
+            return False
+        if isinstance(self.last_mqtt_availability, dict) and self.last_mqtt_availability.get("online") is False:
+            return False
+        try:
+            last_seen = datetime.fromisoformat(self.last_mqtt_availability_at)
+        except ValueError:
+            return False
+        return (datetime.now(UTC) - last_seen).total_seconds() <= ttl_seconds
+
+    def consumer_status(self, *, ttl_seconds: float) -> dict[str, Any]:
+        mqtt_active = self.mqtt_availability_is_active(ttl_seconds=ttl_seconds)
+        websocket_count = self.websocket_count
+        return {
+            "active": websocket_count > 0 or mqtt_active,
+            "websocket_count": websocket_count,
+            "mqtt_active": mqtt_active,
+            "mqtt_last_seen_at": self.last_mqtt_availability_at,
+            "ttl_seconds": ttl_seconds,
+        }
+
     async def add_websocket(self, websocket: WebSocket) -> None:
         await websocket.accept()
         async with self._lock:
@@ -511,11 +542,15 @@ class StatePoller:
         broker: ConnectionBroker,
         interval_seconds: float,
         interval_strategy: Callable[[float], float] | None = None,
+        idle_interval_seconds: float | None = None,
+        active_strategy: Callable[[], bool] | None = None,
     ) -> None:
         self._fetch_state = fetch_state
         self._broker = broker
         self._interval_seconds = interval_seconds
         self._interval_strategy = interval_strategy
+        self._idle_interval_seconds = idle_interval_seconds
+        self._active_strategy = active_strategy
         self._task: asyncio.Task[None] | None = None
         self._stopped = asyncio.Event()
 
@@ -548,9 +583,15 @@ class StatePoller:
             await asyncio.sleep(self._next_interval_seconds())
 
     def _next_interval_seconds(self) -> float:
+        interval = self._base_interval_seconds()
         if self._interval_strategy is None:
+            return interval
+        return max(interval, self._interval_strategy(interval))
+
+    def _base_interval_seconds(self) -> float:
+        if self._idle_interval_seconds is None or self._active_strategy is None:
             return self._interval_seconds
-        return max(self._interval_seconds, self._interval_strategy(self._interval_seconds))
+        return self._interval_seconds if self._active_strategy() else self._idle_interval_seconds
 
 
 class PeriodicPoller:
@@ -561,11 +602,15 @@ class PeriodicPoller:
         *,
         error_handler: Callable[[Exception], None] | None = None,
         interval_strategy: Callable[[float], float] | None = None,
+        idle_interval_seconds: float | None = None,
+        active_strategy: Callable[[], bool] | None = None,
     ) -> None:
         self._task_callback = task
         self._interval_seconds = interval_seconds
         self._error_handler = error_handler
         self._interval_strategy = interval_strategy
+        self._idle_interval_seconds = idle_interval_seconds
+        self._active_strategy = active_strategy
         self._task: asyncio.Task[None] | None = None
         self._stopped = asyncio.Event()
 
@@ -596,6 +641,12 @@ class PeriodicPoller:
             await asyncio.sleep(self._next_interval_seconds())
 
     def _next_interval_seconds(self) -> float:
+        interval = self._base_interval_seconds()
         if self._interval_strategy is None:
+            return interval
+        return max(interval, self._interval_strategy(interval))
+
+    def _base_interval_seconds(self) -> float:
+        if self._idle_interval_seconds is None or self._active_strategy is None:
             return self._interval_seconds
-        return max(self._interval_seconds, self._interval_strategy(self._interval_seconds))
+        return self._interval_seconds if self._active_strategy() else self._idle_interval_seconds

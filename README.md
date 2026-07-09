@@ -145,15 +145,20 @@ cache path, file count, disk bytes, RAM entries, and RAM bytes.
 The bridge centralizes Spotify Web API traffic and adapts its automatic polling when request volume
 gets close to a configurable soft threshold. `POLL_INTERVAL_SECONDS` is the minimum playback polling
 interval. `SPOTIFY_BACKGROUND_POLL_INTERVAL_SECONDS` is the minimum devices/playlists polling
-interval, defaulting to 30 seconds. Devices and the full playlist index publish MQTT retained updates
-only when their semantic payload changes. If Spotify returns `429` with a `Retry-After` header,
-future API calls wait for that window and every poller backs off until the retry window clears.
+interval, defaulting to 30 seconds while a consumer is active. `SPOTIFY_IDLE_POLL_INTERVAL_SECONDS`
+is the shared lower bound for all Spotify polling when no WebSocket client is connected and no recent
+MQTT availability heartbeat is online. Devices and the full playlist index publish MQTT retained
+updates only when their semantic payload changes. If Spotify returns `429` with a `Retry-After`
+header, future API calls wait for that window and every poller backs off until the retry window
+clears.
 
 Useful tuning settings:
 
 ```dotenv
 POLL_INTERVAL_SECONDS=3
 SPOTIFY_BACKGROUND_POLL_INTERVAL_SECONDS=30
+SPOTIFY_IDLE_POLL_INTERVAL_SECONDS=300
+ACTIVE_CONSUMER_TTL_SECONDS=120
 SPOTIFY_RATE_LIMIT_WINDOW_SECONDS=30
 SPOTIFY_RATE_LIMIT_SOFT_REQUESTS_PER_WINDOW=20
 SPOTIFY_RATE_LIMIT_SOFT_RATIO=0.8

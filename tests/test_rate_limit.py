@@ -62,6 +62,32 @@ def test_state_poller_never_goes_faster_than_base_interval():
     assert poller._next_interval_seconds() == 3
 
 
+def test_state_poller_uses_shared_idle_interval_when_no_consumers_are_active():
+    async def fetch_state():
+        return None
+
+    broker = ConnectionBroker(Settings())
+    poller = StatePoller(
+        fetch_state,
+        broker,
+        3,
+        idle_interval_seconds=300,
+        active_strategy=lambda: False,
+    )
+
+    assert poller._next_interval_seconds() == 300
+
+    poller = StatePoller(
+        fetch_state,
+        broker,
+        3,
+        idle_interval_seconds=300,
+        active_strategy=lambda: True,
+    )
+
+    assert poller._next_interval_seconds() == 3
+
+
 def test_periodic_poller_uses_adaptive_backoff_without_going_faster_than_base():
     async def task():
         return None
@@ -73,6 +99,29 @@ def test_periodic_poller_uses_adaptive_backoff_without_going_faster_than_base():
     poller = PeriodicPoller(task, 30, interval_strategy=lambda _: 45)
 
     assert poller._next_interval_seconds() == 45
+
+
+def test_periodic_poller_uses_shared_idle_interval_when_no_consumers_are_active():
+    async def task():
+        return None
+
+    poller = PeriodicPoller(
+        task,
+        30,
+        idle_interval_seconds=300,
+        active_strategy=lambda: False,
+    )
+
+    assert poller._next_interval_seconds() == 300
+
+    poller = PeriodicPoller(
+        task,
+        30,
+        idle_interval_seconds=300,
+        active_strategy=lambda: True,
+    )
+
+    assert poller._next_interval_seconds() == 30
 
 
 @pytest.mark.asyncio

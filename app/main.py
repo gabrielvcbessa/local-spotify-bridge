@@ -28,23 +28,35 @@ settings = get_settings()
 store = RuntimeStore(settings)
 spotify = SpotifyClient(settings, store)
 broker = ConnectionBroker(settings)
+
+
+def has_active_consumers() -> bool:
+    return broker.has_active_consumers(ttl_seconds=settings.active_consumer_ttl_seconds)
+
+
 poller = StatePoller(
     spotify.current_playback,
     broker,
     settings.poll_interval_seconds,
     interval_strategy=spotify.next_poll_interval,
+    idle_interval_seconds=settings.spotify_idle_poll_interval_seconds,
+    active_strategy=has_active_consumers,
 )
 devices_poller = PeriodicPoller(
     lambda: refresh_devices_and_publish(spotify),
     settings.spotify_background_poll_interval_seconds,
     error_handler=broker.mark_spotify_error,
     interval_strategy=spotify.next_poll_interval,
+    idle_interval_seconds=settings.spotify_idle_poll_interval_seconds,
+    active_strategy=has_active_consumers,
 )
 library_poller = PeriodicPoller(
     lambda: refresh_library_and_publish(spotify),
     settings.spotify_background_poll_interval_seconds,
     error_handler=broker.mark_spotify_error,
     interval_strategy=spotify.next_poll_interval,
+    idle_interval_seconds=settings.spotify_idle_poll_interval_seconds,
+    active_strategy=has_active_consumers,
 )
 art_cache = ArtCache(settings)
 playlist_name_cache = PlaylistNameCache()
@@ -130,7 +142,13 @@ async def health() -> dict[str, Any]:
         "target_device_id": target.device_id if target else None,
         "playlist_name_cache": playlist_name_cache.status(),
         "art_cache": art_cache.status(),
+        "consumers": broker.consumer_status(ttl_seconds=settings.active_consumer_ttl_seconds),
         "rate_limit": spotify.rate_limit_status(settings.poll_interval_seconds),
+        "polling": {
+            "playback_active_interval_seconds": settings.poll_interval_seconds,
+            "idle_interval_seconds": settings.spotify_idle_poll_interval_seconds,
+            "background_active_interval_seconds": settings.spotify_background_poll_interval_seconds,
+        },
         "mqtt_topics": broker.mqtt_topics() if settings.mqtt_enabled else None,
         "mqtt_availability": broker.last_mqtt_availability if settings.mqtt_enabled else None,
         "mqtt_availability_at": broker.last_mqtt_availability_at if settings.mqtt_enabled else None,
