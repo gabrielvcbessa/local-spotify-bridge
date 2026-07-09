@@ -129,3 +129,6 @@ def test_debug_dashboard_serves_html():
     assert "Local Spotify Bridge Debug" in response.text
     assert "/v1/debug/status" in response.text
     assert "/v1/debug/events" in response.text
+    assert "payload-toggle" in response.text
+    assert "payload-row" in response.text
+    assert "table-layout: fixed" in response.text

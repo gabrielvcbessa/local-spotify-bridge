@@ -315,6 +315,7 @@ def debug_dashboard_html() -> str:
       width: 100%;
       border-collapse: collapse;
       font-size: 13px;
+      table-layout: fixed;
     }
     th, td {
       border-bottom: 1px solid #29333b;
@@ -329,6 +330,24 @@ def debug_dashboard_html() -> str:
     code {
       color: #d7ecff;
       overflow-wrap: anywhere;
+    }
+    .table-scroll {
+      overflow-x: auto;
+    }
+    .col-time {
+      width: 120px;
+    }
+    .col-status {
+      width: 92px;
+    }
+    .col-code {
+      width: 70px;
+    }
+    .col-latency {
+      width: 90px;
+    }
+    .col-action {
+      width: 94px;
     }
     .ok {
       color: #7fd4a8;
@@ -356,9 +375,29 @@ def debug_dashboard_html() -> str:
       white-space: pre-wrap;
       overflow-wrap: anywhere;
       margin: 0;
-      max-height: 220px;
+      max-height: 260px;
       overflow: auto;
       color: #d7ecff;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .payload-row {
+      display: none;
+    }
+    .payload-row.open {
+      display: table-row;
+    }
+    .payload-box {
+      background: #111820;
+      border: 1px solid #29333b;
+      border-radius: 6px;
+      padding: 10px;
+      max-width: 100%;
+    }
+    .payload-toggle {
+      width: 100%;
+      padding: 6px 8px;
+      font-size: 12px;
     }
   </style>
 </head>
@@ -412,10 +451,21 @@ def debug_dashboard_html() -> str:
 
     <section class="panel" id="detailPanel" style="display: none; margin-top: 16px;">
       <h2 id="detailTitle">Details</h2>
-      <table>
-        <thead><tr><th>Time</th><th>Status</th><th>Code</th><th>Latency</th><th>Answer / Payload</th></tr></thead>
-        <tbody id="detailRows"></tbody>
-      </table>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th class="col-time">Time</th>
+              <th class="col-status">Status</th>
+              <th class="col-code">Code</th>
+              <th class="col-latency">Latency</th>
+              <th>Details</th>
+              <th class="col-action">Payload</th>
+            </tr>
+          </thead>
+          <tbody id="detailRows"></tbody>
+        </table>
+      </div>
       <div class="pager">
         <button id="detailPrev">Previous</button>
         <div class="muted" id="detailPage"></div>
@@ -425,10 +475,21 @@ def debug_dashboard_html() -> str:
 
     <section class="panel" style="margin-top: 16px;">
       <h2 id="recentTitle">Recent Events</h2>
-      <table>
-        <thead><tr><th>Time</th><th>Kind</th><th>Type</th><th>Status</th><th>Details</th><th>Answer / Payload</th></tr></thead>
-        <tbody id="recentRows"></tbody>
-      </table>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th class="col-time">Time</th>
+              <th>Kind</th>
+              <th>Type</th>
+              <th class="col-status">Status</th>
+              <th>Details</th>
+              <th class="col-action">Payload</th>
+            </tr>
+          </thead>
+          <tbody id="recentRows"></tbody>
+        </table>
+      </div>
       <div class="pager">
         <button id="recentPrev">Previous</button>
         <div class="muted" id="recentPage"></div>
@@ -541,12 +602,38 @@ def debug_dashboard_html() -> str:
       return details.join(", ");
     }
 
-    function previewCell(event) {
+    function payloadButtonCell(event, payloadRow) {
       const td = document.createElement("td");
+      const button = document.createElement("button");
+      button.className = "payload-toggle";
+      button.textContent = event.detail ? "View" : "Empty";
+      button.disabled = !event.detail;
+      button.onclick = () => {
+        payloadRow.classList.toggle("open");
+        button.textContent = payloadRow.classList.contains("open") ? "Hide" : "View";
+      };
+      td.appendChild(button);
+      return td;
+    }
+
+    function appendPayloadRows(target, event, metadataCells, columnCount) {
+      const row = document.createElement("tr");
+      const payloadRow = document.createElement("tr");
+      payloadRow.className = "payload-row";
+      for (const node of metadataCells) row.appendChild(node);
+      row.appendChild(payloadButtonCell(event, payloadRow));
+
+      const payloadCell = document.createElement("td");
+      payloadCell.colSpan = columnCount;
+      const box = document.createElement("div");
+      box.className = "payload-box";
       const pre = document.createElement("pre");
       pre.textContent = event.detail || "";
-      td.appendChild(pre);
-      return td;
+      box.appendChild(pre);
+      payloadCell.appendChild(box);
+      payloadRow.appendChild(payloadCell);
+      target.appendChild(row);
+      target.appendChild(payloadRow);
     }
 
     async function fetchEvents({kind = null, requestType = null, offset = 0, limit = 25} = {}) {
@@ -563,14 +650,13 @@ def debug_dashboard_html() -> str:
       const recent = document.getElementById("recentRows");
       recent.replaceChildren();
       for (const event of payload.items) {
-        const tr = document.createElement("tr");
-        tr.appendChild(cell(new Date(event.at).toLocaleTimeString()));
-        tr.appendChild(cell(event.kind));
-        tr.appendChild(codeCell(event.request_type));
-        tr.appendChild(cell(event.status, event.status === "error" ? "error" : event.status === "skipped" ? "warn" : "ok"));
-        tr.appendChild(cell(eventDetails(event)));
-        tr.appendChild(previewCell(event));
-        recent.appendChild(tr);
+        appendPayloadRows(recent, event, [
+          cell(new Date(event.at).toLocaleTimeString()),
+          cell(event.kind),
+          codeCell(event.request_type),
+          cell(event.status, event.status === "error" ? "error" : event.status === "skipped" ? "warn" : "ok"),
+          cell(eventDetails(event))
+        ], 6);
       }
       document.getElementById("recentPage").textContent = payload.total
         ? (recentOffset + 1) + "-" + Math.min(recentOffset + recentLimit, payload.total) + " of " + payload.total
@@ -599,13 +685,13 @@ def debug_dashboard_html() -> str:
       const rows = document.getElementById("detailRows");
       rows.replaceChildren();
       for (const event of payload.items) {
-        const tr = document.createElement("tr");
-        tr.appendChild(cell(new Date(event.at).toLocaleString()));
-        tr.appendChild(cell(event.status, event.status === "error" ? "error" : event.status === "skipped" ? "warn" : "ok"));
-        tr.appendChild(cell(event.status_code || "-"));
-        tr.appendChild(cell(event.latency_ms ? Math.round(event.latency_ms) + "ms" : "-"));
-        tr.appendChild(previewCell(event));
-        rows.appendChild(tr);
+        appendPayloadRows(rows, event, [
+          cell(new Date(event.at).toLocaleString()),
+          cell(event.status, event.status === "error" ? "error" : event.status === "skipped" ? "warn" : "ok"),
+          cell(event.status_code || "-"),
+          cell(event.latency_ms ? Math.round(event.latency_ms) + "ms" : "-"),
+          cell(eventDetails(event))
+        ], 6);
       }
       document.getElementById("detailPage").textContent = payload.total
         ? (detailOffset + 1) + "-" + Math.min(detailOffset + detailLimit, payload.total) + " of " + payload.total
