@@ -167,11 +167,16 @@ SPOTIFY_RATE_LIMIT_MAX_POLL_INTERVAL_SECONDS=60
 SPOTIFY_RATE_LIMIT_RETRY_AFTER_PADDING_SECONDS=0.5
 SPOTIFY_PRELOAD_NEXT_ENABLED=true
 SPOTIFY_PLAYLIST_SORT=spotify
+SPOTIFY_TRACK_END_REFRESH_PADDING_SECONDS=1
 COMMAND_FOLLOWUP_REFRESH_DELAYS_SECONDS=0.5,1.5
 ```
 
 `SPOTIFY_PLAYLIST_SORT=spotify` preserves Spotify's playlist order from `/me/playlists`.
 `SPOTIFY_PLAYLIST_SORT=alpha` sorts the full retained playlist index alphabetically by title.
+While a consumer is active, playback polling also looks at `progress_ms` and `duration_ms`; if the
+current track should finish before the next normal poll, the bridge wakes just after the expected
+track end. `SPOTIFY_TRACK_END_REFRESH_PADDING_SECONDS` controls that small settle delay. When no
+consumer is active, `SPOTIFY_IDLE_POLL_INTERVAL_SECONDS` remains the lower bound.
 
 `/health` includes `rate_limit` diagnostics with the current rolling-window request count, adaptive
 poll interval, and any active `Retry-After` wait. Spotify does not publish one universal numeric
@@ -228,10 +233,11 @@ curl -X POST http://localhost:8090/v1/control/transfer \
 ```
 
 After every successful command, the bridge immediately refreshes playback state from Spotify and
-publishes changed state through WebSocket and MQTT. Track/source-changing commands such as `play`,
-`next`, `previous`, and `transfer` also schedule short follow-up refreshes so Spotify Connect has
-time to settle before the bridge publishes the final track/device state. Tune those follow-up delays
-with `COMMAND_FOLLOWUP_REFRESH_DELAYS_SECONDS`.
+publishes changed state through WebSocket and MQTT; it does not wait for the next
+`POLL_INTERVAL_SECONDS` tick. Track/source-changing commands such as `play`, `next`, `previous`,
+`select_source`, `play_library_item`, and `transfer` also schedule short follow-up refreshes so
+Spotify Connect has time to settle before the bridge publishes the final track/device state. Tune
+those follow-up delays with `COMMAND_FOLLOWUP_REFRESH_DELAYS_SECONDS`.
 
 When `SPOTIFY_PRELOAD_NEXT_ENABLED=true`, playback refreshes also make a best-effort request to
 Spotify's queue endpoint and expose the first upcoming track as `next_track` in `/v1/state`,

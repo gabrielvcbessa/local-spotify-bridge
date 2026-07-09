@@ -3,6 +3,7 @@ import pytest
 
 from app.broker import ConnectionBroker, PeriodicPoller, StatePoller
 from app.config import Settings
+from app.models import PlaybackSnapshot
 from app.rate_limit import SpotifyRateLimiter
 from app.spotify import SpotifyClient
 
@@ -86,6 +87,47 @@ def test_state_poller_uses_shared_idle_interval_when_no_consumers_are_active():
     )
 
     assert poller._next_interval_seconds() == 3
+
+
+@pytest.mark.asyncio
+async def test_state_poller_wakes_near_track_end_when_consumers_are_active():
+    async def fetch_state():
+        return None
+
+    broker = ConnectionBroker(Settings())
+    await broker.publish_if_changed(
+        PlaybackSnapshot(is_playing=True, progress_ms=29_500, duration_ms=30_000, title="Almost done")
+    )
+    poller = StatePoller(
+        fetch_state,
+        broker,
+        5,
+        active_strategy=lambda: True,
+        track_end_refresh_padding_seconds=1,
+    )
+
+    assert poller._next_interval_seconds() == 1.5
+
+
+@pytest.mark.asyncio
+async def test_state_poller_keeps_idle_lower_bound_near_track_end_without_consumers():
+    async def fetch_state():
+        return None
+
+    broker = ConnectionBroker(Settings())
+    await broker.publish_if_changed(
+        PlaybackSnapshot(is_playing=True, progress_ms=29_500, duration_ms=30_000, title="Almost done")
+    )
+    poller = StatePoller(
+        fetch_state,
+        broker,
+        5,
+        idle_interval_seconds=300,
+        active_strategy=lambda: False,
+        track_end_refresh_padding_seconds=1,
+    )
+
+    assert poller._next_interval_seconds() == 300
 
 
 def test_periodic_poller_uses_adaptive_backoff_without_going_faster_than_base():

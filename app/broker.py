@@ -544,6 +544,7 @@ class StatePoller:
         interval_strategy: Callable[[float], float] | None = None,
         idle_interval_seconds: float | None = None,
         active_strategy: Callable[[], bool] | None = None,
+        track_end_refresh_padding_seconds: float = 0.0,
     ) -> None:
         self._fetch_state = fetch_state
         self._broker = broker
@@ -551,6 +552,7 @@ class StatePoller:
         self._interval_strategy = interval_strategy
         self._idle_interval_seconds = idle_interval_seconds
         self._active_strategy = active_strategy
+        self._track_end_refresh_padding_seconds = track_end_refresh_padding_seconds
         self._task: asyncio.Task[None] | None = None
         self._stopped = asyncio.Event()
 
@@ -590,8 +592,29 @@ class StatePoller:
 
     def _base_interval_seconds(self) -> float:
         if self._idle_interval_seconds is None or self._active_strategy is None:
-            return self._interval_seconds
-        return self._interval_seconds if self._active_strategy() else self._idle_interval_seconds
+            interval = self._interval_seconds
+            consumers_active = True
+        else:
+            consumers_active = self._active_strategy()
+            interval = self._interval_seconds if consumers_active else self._idle_interval_seconds
+        if consumers_active:
+            interval = min(interval, self._track_end_interval_seconds() or interval)
+        return interval
+
+    def _track_end_interval_seconds(self) -> float | None:
+        state = self._broker.current_state
+        if (
+            state is None
+            or not state.is_playing
+            or state.progress_ms is None
+            or state.duration_ms is None
+            or state.duration_ms <= 0
+        ):
+            return None
+        remaining_ms = state.duration_ms - state.progress_ms
+        if remaining_ms <= 0:
+            return 1.0
+        return max(1.0, (remaining_ms / 1000) + self._track_end_refresh_padding_seconds)
 
 
 class PeriodicPoller:

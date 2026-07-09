@@ -41,6 +41,7 @@ poller = StatePoller(
     interval_strategy=spotify.next_poll_interval,
     idle_interval_seconds=settings.spotify_idle_poll_interval_seconds,
     active_strategy=has_active_consumers,
+    track_end_refresh_padding_seconds=settings.spotify_track_end_refresh_padding_seconds,
 )
 devices_poller = PeriodicPoller(
     lambda: refresh_devices_and_publish(spotify),
