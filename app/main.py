@@ -1823,6 +1823,7 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
         await spotify.transfer_playback(device_id, bool(play))
         if command.get("set_target"):
             store.set_target_device(TargetDevice(device_id=device_id))
+        await refresh_devices_and_publish(spotify)
         follow_up_refresh = True
     elif command_type == "shuffle_set":
         enabled = command.get("enabled")

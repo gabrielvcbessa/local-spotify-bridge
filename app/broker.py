@@ -67,6 +67,8 @@ class ConnectionBroker:
         self.last_spotify_error: str | None = None
         self.last_mqtt_availability: dict[str, Any] | None = None
         self.last_mqtt_availability_at: str | None = None
+        self.last_mqtt_activity: dict[str, Any] | None = None
+        self.last_mqtt_activity_at: str | None = None
         self._mqtt_payload_fingerprints: dict[str, str] = {}
         self._forward_transition_expected_until = 0.0
         self._lock = asyncio.Lock()
@@ -130,13 +132,21 @@ class ConnectionBroker:
             return True
         return self.mqtt_availability_is_active(ttl_seconds=ttl_seconds)
 
+    def mark_mqtt_activity(self, *, source: str, payload: dict[str, Any] | None = None) -> None:
+        self.last_mqtt_activity_at = datetime.now(UTC).isoformat()
+        self.last_mqtt_activity = {"source": source, **(payload or {})}
+
     def mqtt_availability_is_active(self, *, ttl_seconds: float) -> bool:
-        if self.last_mqtt_availability_at is None:
+        if self.last_mqtt_activity_at is None:
             return False
-        if isinstance(self.last_mqtt_availability, dict) and self.last_mqtt_availability.get("online") is False:
+        if (
+            isinstance(self.last_mqtt_activity, dict)
+            and self.last_mqtt_activity.get("source") == "availability"
+            and self.last_mqtt_activity.get("online") is False
+        ):
             return False
         try:
-            last_seen = datetime.fromisoformat(self.last_mqtt_availability_at)
+            last_seen = datetime.fromisoformat(self.last_mqtt_activity_at)
         except ValueError:
             return False
         return (datetime.now(UTC) - last_seen).total_seconds() <= ttl_seconds
@@ -149,6 +159,8 @@ class ConnectionBroker:
             "websocket_count": websocket_count,
             "mqtt_active": mqtt_active,
             "mqtt_last_seen_at": self.last_mqtt_availability_at,
+            "mqtt_last_activity_at": self.last_mqtt_activity_at,
+            "mqtt_last_activity": self.last_mqtt_activity,
             "ttl_seconds": ttl_seconds,
         }
 
@@ -292,19 +304,22 @@ class ConnectionBroker:
 
     async def _handle_mqtt_message(self, topic: str, payload: str) -> None:
         if topic == self.mqtt_topic("availability"):
-            self.last_mqtt_availability_at = datetime.now(UTC).isoformat()
             try:
                 availability = json.loads(payload)
                 self.last_mqtt_availability = availability if isinstance(availability, dict) else {"value": availability}
             except json.JSONDecodeError:
                 self.last_mqtt_availability = {"value": payload}
+            self.last_mqtt_availability_at = datetime.now(UTC).isoformat()
+            self.mark_mqtt_activity(source="availability", payload=self.last_mqtt_availability)
             return
         if topic == self.mqtt_topic("request"):
+            self.mark_mqtt_activity(source="request")
             await self._handle_mqtt_rpc(payload, self._mqtt_request_handler, self.mqtt_topic("request_result"), "request")
             return
         if topic != self.mqtt_topic("command"):
             return
 
+        self.mark_mqtt_activity(source="command")
         await self._handle_mqtt_rpc(payload, self._mqtt_command_handler, self.mqtt_topic("command_result"), "command")
 
     async def _handle_mqtt_rpc(

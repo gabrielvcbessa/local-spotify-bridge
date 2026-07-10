@@ -336,26 +336,51 @@ async def test_mqtt_availability_is_recorded_without_command_result():
 
     assert broker.last_mqtt_availability == {"online": True}
     assert broker.last_mqtt_availability_at is not None
+    assert broker.last_mqtt_activity == {"source": "availability", "online": True}
+    assert broker.last_mqtt_activity_at is not None
     assert mqtt.published == []
 
 
-def test_broker_active_consumers_uses_recent_mqtt_availability():
+@pytest.mark.asyncio
+async def test_mqtt_command_and_request_refresh_consumer_activity():
+    broker = ConnectionBroker(Settings(MQTT_ENABLED=True, MQTT_KNOB_TOPIC_PREFIX="rotary", MQTT_KNOB_DEVICE_ID="kitchen"))
+    broker._mqtt_client = FakeMqttClient()
+
+    async def command_handler(command):
+        return {"command_type": command["type"]}
+
+    async def request_handler(request):
+        return {"request_type": request["type"]}
+
+    broker.set_mqtt_command_handler(command_handler)
+    broker.set_mqtt_request_handler(request_handler)
+
+    await broker._handle_mqtt_message("rotary/kitchen/command", "{\"type\":\"next\"}")
+
+    assert broker.last_mqtt_activity == {"source": "command"}
+    assert broker.has_active_consumers(ttl_seconds=120)
+
+    await broker._handle_mqtt_message("rotary/kitchen/request", "{\"type\":\"refresh\"}")
+
+    assert broker.last_mqtt_activity == {"source": "request"}
+    assert broker.has_active_consumers(ttl_seconds=120)
+
+
+def test_broker_active_consumers_uses_recent_mqtt_activity():
     broker = ConnectionBroker(Settings())
-    broker.last_mqtt_availability = {"online": True}
-    broker.last_mqtt_availability_at = datetime.now(UTC).isoformat()
+    broker.mark_mqtt_activity(source="availability", payload={"online": True})
 
     assert broker.has_active_consumers(ttl_seconds=120)
     assert broker.consumer_status(ttl_seconds=120)["mqtt_active"] is True
 
 
-def test_broker_active_consumers_ignores_stale_or_offline_mqtt_availability():
+def test_broker_active_consumers_ignores_stale_or_offline_mqtt_activity():
     broker = ConnectionBroker(Settings())
-    broker.last_mqtt_availability = {"online": True}
-    broker.last_mqtt_availability_at = (datetime.now(UTC) - timedelta(seconds=300)).isoformat()
+    broker.last_mqtt_activity = {"source": "availability", "online": True}
+    broker.last_mqtt_activity_at = (datetime.now(UTC) - timedelta(seconds=300)).isoformat()
 
     assert not broker.has_active_consumers(ttl_seconds=120)
 
-    broker.last_mqtt_availability = {"online": False}
-    broker.last_mqtt_availability_at = datetime.now(UTC).isoformat()
+    broker.mark_mqtt_activity(source="availability", payload={"online": False})
 
     assert not broker.has_active_consumers(ttl_seconds=120)

@@ -29,6 +29,9 @@ class FakeCommandSpotifyClient:
     async def previous_track(self, device_id: str | None = None) -> None:
         self.calls.append(("previous", device_id))
 
+    async def transfer_playback(self, device_id: str, play: bool = True) -> None:
+        self.calls.append(("transfer", device_id))
+
 
 class FakeDevicesClient:
     def __init__(self) -> None:
@@ -201,6 +204,35 @@ async def test_mqtt_next_previous_do_not_use_implicit_target_device(monkeypatch)
         ("next", "speaker-1"),
     ]
     assert len(refreshes) == 3
+
+
+@pytest.mark.asyncio
+async def test_mqtt_transfer_refreshes_devices_and_state(monkeypatch):
+    client = FakeCommandSpotifyClient()
+    refreshes = []
+    device_refreshes = []
+
+    async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
+        refreshes.append(tuple(follow_up_delays))
+
+    async def fake_refresh_devices_and_publish(_client):
+        device_refreshes.append(True)
+        return {"items": []}
+
+    async def fake_publish_mqtt_status():
+        return None
+
+    monkeypatch.setattr(main, "spotify", client)
+    monkeypatch.setattr(main, "refresh_and_publish", fake_refresh_and_publish)
+    monkeypatch.setattr(main, "refresh_devices_and_publish", fake_refresh_devices_and_publish)
+    monkeypatch.setattr(main, "publish_mqtt_status", fake_publish_mqtt_status)
+    monkeypatch.setattr(main.store, "set_target_device", lambda _target: None)
+
+    await main.handle_mqtt_command({"type": "transfer", "device_id": "speaker-1", "set_target": True})
+
+    assert client.calls == [("transfer", "speaker-1")]
+    assert device_refreshes == [True]
+    assert len(refreshes) == 1
 
 
 @pytest.mark.asyncio
