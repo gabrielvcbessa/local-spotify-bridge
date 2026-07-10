@@ -268,3 +268,26 @@ async def test_spotify_playlist_429_does_not_block_playback_refresh(monkeypatch)
     assert any("/v1/me/player" in request for request in requests)
 
     await client.close()
+
+
+@pytest.mark.asyncio
+async def test_spotify_command_accepts_successful_text_response():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "accounts.spotify.com":
+            return httpx.Response(200, json={"access_token": "token", "expires_in": 3600})
+        if request.url.path == "/v1/me/player/next":
+            return httpx.Response(200, text="opaque-command-id")
+        return httpx.Response(404)
+
+    client = SpotifyClient(
+        Settings(
+            SPOTIFY_CLIENT_ID="client",
+            SPOTIFY_CLIENT_SECRET="secret",
+            SPOTIFY_REFRESH_TOKEN="refresh",
+        ),
+        http=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    await client.next_track()
+
+    await client.close()

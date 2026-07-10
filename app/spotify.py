@@ -185,8 +185,11 @@ class SpotifyClient:
                 response.headers.get("Retry-After"),
             )
             if response.status_code not in expected:
-                response.raise_for_status()
-            if response.status_code == 204 or not response.content:
+                if response.is_error:
+                    response.raise_for_status()
+                if method.upper() != "GET":
+                    return None
+            if response.status_code == 204 or not response.content or not response.content.strip():
                 return None
             return response.json()
         except Exception as exc:
