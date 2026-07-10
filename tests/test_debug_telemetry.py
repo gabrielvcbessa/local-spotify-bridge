@@ -163,8 +163,13 @@ def test_health_exposes_recent_mqtt_command_status(monkeypatch):
         "error": None,
         "state_version": 42,
         "published_state": True,
+        "idempotent_replay": None,
+        "received_at": None,
+        "completed_at": None,
+        "latency_ms": None,
     }
     assert commands["last_result_at"] is not None
+    assert commands["cached_result_count"] >= 0
 
 
 def test_debug_dashboard_serves_html():
@@ -174,6 +179,8 @@ def test_debug_dashboard_serves_html():
     assert "Local Spotify Bridge Debug" in response.text
     assert "/v1/debug/status" in response.text
     assert "/v1/debug/events" in response.text
+    assert "Last MQTT Command" in response.text
+    assert "lastCommandDetail" in response.text
     assert "payload-toggle" in response.text
     assert "payload-row" in response.text
     assert "table-layout: fixed" in response.text

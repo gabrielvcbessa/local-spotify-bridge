@@ -124,6 +124,7 @@ MQTT_KNOB_TOPIC_PREFIX=rotary
 MQTT_KNOB_DEVICE_ID=kitchen
 MQTT_QOS=1
 MQTT_KNOB_ART_SIZE=360
+COMMAND_FOLLOWUP_REFRESH_PROFILES_SECONDS=play=0.25,0.9;pause=0.25,0.9;play_pause=0.25,0.9;next=0.5,1.5,3.0;previous=0.5,1.5,3.0;select_source=0.7,1.8,3.5;play_library_item=0.7,1.8,3.5;transfer=0.7,1.8,3.5
 ```
 
 Artwork cache settings:
@@ -183,6 +184,7 @@ SPOTIFY_PRELOAD_NEXT_ENABLED=true
 SPOTIFY_PLAYLIST_SORT=spotify
 SPOTIFY_TRACK_END_REFRESH_PADDING_SECONDS=1
 COMMAND_FOLLOWUP_REFRESH_DELAYS_SECONDS=0.5,1.5
+COMMAND_FOLLOWUP_REFRESH_PROFILES_SECONDS=play=0.25,0.9;pause=0.25,0.9;play_pause=0.25,0.9;next=0.5,1.5,3.0;previous=0.5,1.5,3.0;select_source=0.7,1.8,3.5;play_library_item=0.7,1.8,3.5;transfer=0.7,1.8,3.5
 ```
 
 `SPOTIFY_PLAYLIST_SORT=spotify` preserves Spotify's playlist order from `/me/playlists`.
@@ -191,6 +193,9 @@ While a consumer is active, playback polling also looks at `progress_ms` and `du
 current track should finish before the next normal poll, the bridge wakes just after the expected
 track end. `SPOTIFY_TRACK_END_REFRESH_PADDING_SECONDS` controls that small settle delay. When no
 consumer is active, `SPOTIFY_IDLE_POLL_INTERVAL_SECONDS` remains the lower bound.
+`COMMAND_FOLLOWUP_REFRESH_PROFILES_SECONDS` overrides the fallback follow-up refresh delays per
+command type, which lets quick play/pause updates settle faster than queue-changing or device-changing
+commands.
 
 `/health` includes `rate_limit` diagnostics with the current rolling-window request count, adaptive
 poll interval, and any active `Retry-After` wait. Spotify does not publish one universal numeric
@@ -209,7 +214,8 @@ GET /v1/debug/events
 ```
 
 `/debug` is a browser page for local operations. It shows the current polling mode, detected
-consumers, recent events, and grouped counts for these periods: `1h`, `3h`, `6h`, `12h`, `1d`,
+consumers, the most recent MQTT command/result, recent events, and grouped counts for these periods:
+`1h`, `3h`, `6h`, `12h`, `1d`,
 `3d`, and `7d`. Summary rows are clickable: selecting a Spotify request type or MQTT topic opens a
 detail view with the latest matching events, status, and a capped response/payload preview. Recent
 events are paginated and filtered by the selected period.
@@ -530,6 +536,7 @@ bridge publishes the knob snapshot contract to retained state and config topics:
 
 ```text
 rotary/<device_id>/state          retained, bridge -> knob
+rotary/<device_id>/control_state  retained, fast controls-only state, bridge -> knob
 rotary/<device_id>/config         retained, bridge -> knob
 rotary/<device_id>/command        non-retained, knob -> bridge
 rotary/<device_id>/command_result non-retained, bridge -> knob
@@ -549,7 +556,10 @@ rotary/<device_id>/art/previous/rgb565  retained binary RGB565, bridge -> knob
 The default `<device_id>` is `knob`; set `MQTT_KNOB_DEVICE_ID=kitchen` or another stable name for a
 specific device. `/health` includes `mqtt_topics` when MQTT is enabled.
 
-The retained `state` message uses the same fields as `/v1/knob/snapshot`, including `payload_hash`,
+The retained `control_state` message is a smaller retained payload for fast control surfaces. It
+includes play state, track identity/title/artist, progress/duration, device id/name/type/active
+state/volume support, shuffle, and repeat. The richer retained `state` message uses the same fields
+as `/v1/knob/snapshot`, including `payload_hash`,
 `playback_hash`, `art_hash`, `context.display_name`, device capability flags, processed art URL, and
 MQTT art metadata. When MQTT is enabled, `art`, `next_track.art`, and `previous_track.art` can include
 `mqtt_topic` and `local_cache_path`. Low-power devices can subscribe to `art.mqtt_topic` and receive
@@ -574,21 +584,25 @@ messages still publish for each command/request.
 MQTT command examples:
 
 ```json
-{ "type": "play_pause" }
-{ "type": "next" }
-{ "type": "previous" }
-{ "type": "volume_set", "volume_percent": 42 }
-{ "type": "seek", "position_ms": 30000 }
-{ "type": "select_source", "uri": "spotify:playlist:..." }
-{ "type": "shuffle_set", "enabled": true }
-{ "type": "repeat_set", "mode": "context" }
-{ "type": "transfer", "device_id": "...", "play": true, "set_target": true }
-{ "type": "play_library_item", "context_uri": "spotify:playlist:...", "item_uri": "spotify:track:..." }
+{ "request_id": "knob-101", "type": "play_pause" }
+{ "request_id": "knob-102", "type": "next" }
+{ "request_id": "knob-103", "type": "previous" }
+{ "request_id": "knob-104", "type": "volume_set", "volume_percent": 42 }
+{ "request_id": "knob-105", "type": "seek", "position_ms": 30000 }
+{ "request_id": "knob-106", "type": "select_source", "uri": "spotify:playlist:..." }
+{ "request_id": "knob-107", "type": "shuffle_set", "enabled": true }
+{ "request_id": "knob-108", "type": "repeat_set", "mode": "context" }
+{ "request_id": "knob-109", "type": "transfer", "device_id": "...", "play": true, "set_target": true }
+{ "request_id": "knob-110", "type": "play_library_item", "context_uri": "spotify:playlist:...", "item_uri": "spotify:track:..." }
 ```
 
 After a successful command, the bridge refreshes Spotify state and publishes an updated retained
 snapshot. `volume_set` is ignored with a successful command result when the current device reports
 `volume_control_supported: false`.
+Commands should include a stable `request_id`. If the same `request_id` is received again, the bridge
+replays the cached `command_result` instead of sending the command to Spotify twice. Command results
+include `received_at`, `completed_at`, `latency_ms`, and `idempotent_replay` when a cached result was
+replayed.
 
 MQTT request examples for non-playback data:
 

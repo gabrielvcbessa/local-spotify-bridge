@@ -61,6 +61,19 @@ class Settings(BaseSettings):
         default="0.5,1.5",
         alias="COMMAND_FOLLOWUP_REFRESH_DELAYS_SECONDS",
     )
+    command_followup_refresh_profiles_seconds: str = Field(
+        default=(
+            "play=0.25,0.9;"
+            "pause=0.25,0.9;"
+            "play_pause=0.25,0.9;"
+            "next=0.5,1.5,3.0;"
+            "previous=0.5,1.5,3.0;"
+            "select_source=0.7,1.8,3.5;"
+            "play_library_item=0.7,1.8,3.5;"
+            "transfer=0.7,1.8,3.5"
+        ),
+        alias="COMMAND_FOLLOWUP_REFRESH_PROFILES_SECONDS",
+    )
     state_change_progress_drift_ms: int = Field(default=5000, alias="STATE_CHANGE_PROGRESS_DRIFT_MS")
     debug_telemetry_max_events: int = Field(default=50000, alias="DEBUG_TELEMETRY_MAX_EVENTS")
     debug_telemetry_retention_seconds: int = Field(default=604800, alias="DEBUG_TELEMETRY_RETENTION_SECONDS")
@@ -98,8 +111,28 @@ class Settings(BaseSettings):
 
     @property
     def command_followup_refresh_delays(self) -> tuple[float, ...]:
+        return self._parse_delays(self.command_followup_refresh_delays_seconds)
+
+    @property
+    def command_followup_refresh_profiles(self) -> dict[str, tuple[float, ...]]:
+        profiles: dict[str, tuple[float, ...]] = {}
+        for raw_profile in self.command_followup_refresh_profiles_seconds.split(";"):
+            raw_profile = raw_profile.strip()
+            if not raw_profile or "=" not in raw_profile:
+                continue
+            command, raw_delays = raw_profile.split("=", 1)
+            command = command.strip()
+            if command:
+                profiles[command] = self._parse_delays(raw_delays)
+        return profiles
+
+    def command_followup_refresh_delays_for(self, command_type: str) -> tuple[float, ...]:
+        return self.command_followup_refresh_profiles.get(command_type, self.command_followup_refresh_delays)
+
+    @staticmethod
+    def _parse_delays(value: str) -> tuple[float, ...]:
         delays: list[float] = []
-        for raw_delay in self.command_followup_refresh_delays_seconds.split(","):
+        for raw_delay in value.split(","):
             raw_delay = raw_delay.strip()
             if not raw_delay:
                 continue

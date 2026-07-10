@@ -55,6 +55,8 @@ def test_mqtt_knob_config_defaults_to_stopwatch_art_size():
     config = main.mqtt_knob_config()
 
     assert main.mqtt_art_options().size == 360
+    assert config["topics"]["control_state"] == "rotary/knob/control_state"
+    assert config["retain"]["control_state"] is True
     assert config["http"]["art_url"] == (
         "http://localhost:8090/v1/knob/art/current.rgb565"
         "?size=360&format=rotary-lvgl&variant=player-bg"

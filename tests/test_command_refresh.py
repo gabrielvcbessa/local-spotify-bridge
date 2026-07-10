@@ -113,6 +113,54 @@ async def test_refresh_and_publish_schedules_follow_up_refreshes(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_mqtt_knob_snapshot_publishes_control_state(monkeypatch):
+    published = []
+
+    async def fake_publish_mqtt_retained(topic, payload):
+        published.append((topic, payload))
+
+    async def fake_publish_mqtt_art_payloads(_client, _state, _options):
+        return None
+
+    async def fake_publish_mqtt_status():
+        return None
+
+    async def fake_prewarm_cached_track_art(*_args):
+        return None
+
+    async def fake_resolved_context_name(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(main.broker, "publish_mqtt_retained", fake_publish_mqtt_retained)
+    monkeypatch.setattr(main, "publish_mqtt_art_payloads", fake_publish_mqtt_art_payloads)
+    monkeypatch.setattr(main, "publish_mqtt_status", fake_publish_mqtt_status)
+    monkeypatch.setattr(main, "prewarm_cached_track_art", fake_prewarm_cached_track_art)
+    monkeypatch.setattr(main, "resolved_context_name", fake_resolved_context_name)
+
+    state = PlaybackSnapshot(
+        is_playing=True,
+        item_id="track-1",
+        item_uri="spotify:track:track-1",
+        title="Song",
+        artists=["Artist"],
+        device_id="device-1",
+        device_name="Speaker",
+        device_volume_percent=42,
+        volume_control_supported=True,
+    )
+
+    await main.mqtt_knob_snapshot(7, state)
+
+    control = [payload for topic, payload in published if topic == "control_state"]
+    assert len(control) == 1
+    assert control[0]["version"] == 7
+    assert control[0]["playing"] is True
+    assert control[0]["track_id"] == "track-1"
+    assert control[0]["device"]["id"] == "device-1"
+    assert control[0]["device"]["volume_percent"] == 42
+
+
+@pytest.mark.asyncio
 async def test_refresh_devices_and_publish_updates_cache_and_retained_topic(monkeypatch):
     client = FakeDevicesClient()
     published = []
@@ -203,7 +251,11 @@ async def test_mqtt_next_previous_do_not_use_implicit_target_device(monkeypatch)
         ("previous", None),
         ("next", "speaker-1"),
     ]
-    assert len(refreshes) == 3
+    assert refreshes == [
+        main.settings.command_followup_refresh_delays_for("next"),
+        main.settings.command_followup_refresh_delays_for("previous"),
+        main.settings.command_followup_refresh_delays_for("next"),
+    ]
 
 
 @pytest.mark.asyncio
@@ -232,7 +284,7 @@ async def test_mqtt_transfer_refreshes_devices_and_state(monkeypatch):
 
     assert client.calls == [("transfer", "speaker-1")]
     assert device_refreshes == [True]
-    assert len(refreshes) == 1
+    assert refreshes == [main.settings.command_followup_refresh_delays_for("transfer")]
 
 
 @pytest.mark.asyncio
@@ -265,7 +317,7 @@ async def test_mqtt_play_pause_does_not_use_implicit_target_device(monkeypatch):
         ("pause", "speaker-1"),
     ]
     assert refreshes == [
-        main.settings.command_followup_refresh_delays,
-        main.settings.command_followup_refresh_delays,
-        main.settings.command_followup_refresh_delays,
+        main.settings.command_followup_refresh_delays_for("play_pause"),
+        main.settings.command_followup_refresh_delays_for("play_pause"),
+        main.settings.command_followup_refresh_delays_for("pause"),
     ]

@@ -428,6 +428,11 @@ def debug_dashboard_html() -> str:
         <div class="metric" id="storedEvents">-</div>
         <div class="muted" id="retention"></div>
       </div>
+      <div class="panel">
+        <h2>Last MQTT Command</h2>
+        <div class="metric" id="lastCommand">-</div>
+        <div class="muted" id="lastCommandDetail"></div>
+      </div>
     </section>
 
     <section class="panel">
@@ -567,6 +572,16 @@ def debug_dashboard_html() -> str:
         "WS " + health.consumers.websocket_count + ", MQTT " + (health.consumers.mqtt_active ? "active" : "inactive");
       document.getElementById("storedEvents").textContent = payload.requests.stored_events;
       document.getElementById("retention").textContent = "Retention " + Math.round(payload.requests.retention_seconds / 3600) + "h";
+      const commandStatus = health.mqtt_commands || {};
+      const lastCommand = commandStatus.last_command || {};
+      const lastResult = commandStatus.last_result || {};
+      document.getElementById("lastCommand").textContent = lastCommand.type || "-";
+      const resultText = lastResult.ok === true ? "ok" : (lastResult.ok === false ? "failed" : "pending");
+      const latency = lastResult.latency_ms == null ? "" : ", " + Math.round(lastResult.latency_ms) + "ms";
+      const replay = lastResult.idempotent_replay ? ", replay" : "";
+      const error = lastResult.error ? ", " + lastResult.error : "";
+      document.getElementById("lastCommandDetail").textContent =
+        (lastCommand.request_id || "no request id") + " - " + resultText + latency + replay + error;
 
       const periods = document.getElementById("periods");
       periods.replaceChildren();
@@ -1318,6 +1333,7 @@ async def mqtt_knob_snapshot(version: int, state) -> dict[str, Any]:
     await prewarm_cached_track_art(spotify, state, art_options)
     await publish_mqtt_art_payloads(spotify, state, art_options)
     await publish_mqtt_status()
+    await broker.publish_mqtt_retained("control_state", mqtt_control_state(version, state))
     snapshot = knob_snapshot(
         version=version,
         state=state,
@@ -1340,6 +1356,7 @@ def mqtt_knob_config() -> dict[str, Any]:
         "qos": settings.mqtt_qos,
         "retain": {
             "state": True,
+            "control_state": True,
             "config": True,
             "library_root": True,
             "library_page": True,
@@ -1392,6 +1409,29 @@ def mqtt_knob_config() -> dict[str, Any]:
             "max_subtitle_chars": 64,
         },
     }
+
+
+def mqtt_control_state(version: int, state: PlaybackSnapshot | None) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "playing": bool(state.is_playing) if state else False,
+        "track_id": state.item_id if state else None,
+        "track_uri": state.item_uri if state else None,
+        "title": state.title if state else None,
+        "artist_text": ", ".join(state.artists) if state and state.artists else None,
+        "progress_ms": state.progress_ms if state else None,
+        "duration_ms": state.duration_ms if state else None,
+        "device": {
+            "id": state.device_id if state else None,
+            "name": state.device_name if state else None,
+            "type": state.device_type if state else None,
+            "is_active": state.device_is_active if state else None,
+            "volume_percent": state.device_volume_percent if state else None,
+            "volume_control_supported": state.volume_control_supported if state else False,
+        },
+        "shuffle": state.shuffle_state if state else None,
+        "repeat": state.repeat_state if state else None,
+    }
+    return envelope(version=version, payload=payload)
 
 
 def mqtt_art_options() -> ArtOptions:
@@ -1847,7 +1887,7 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
 
     await refresh_and_publish(
         spotify,
-        follow_up_delays=settings.command_followup_refresh_delays if follow_up_refresh else (),
+        follow_up_delays=settings.command_followup_refresh_delays_for(command_type) if follow_up_refresh else (),
     )
     await publish_mqtt_status()
     return {"state_version": broker.version, "published_state": True}
