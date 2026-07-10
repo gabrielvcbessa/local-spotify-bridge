@@ -1350,8 +1350,24 @@ async def mqtt_knob_snapshot(version: int, state) -> dict[str, Any]:
 def mqtt_knob_config() -> dict[str, Any]:
     art_options = mqtt_art_options()
     topics = broker.mqtt_topics()
+    schema_version = 2
     return {
-        "schema_version": 2,
+        "schema_version": schema_version,
+        "protocol": {
+            "name": "rotary-mqtt-knob",
+            "schema_version": schema_version,
+            "min_client_schema_version": 2,
+            "max_client_schema_version": 2,
+            "features": [
+                "control_state",
+                "library_browse",
+                "devices",
+                "command_request_id",
+                "idempotent_command_result",
+                "command_latency",
+                "retained_rgb565_art",
+            ],
+        },
         "device_id": settings.mqtt_knob_device_id,
         "qos": settings.mqtt_qos,
         "retain": {

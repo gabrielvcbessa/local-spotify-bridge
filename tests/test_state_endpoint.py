@@ -55,6 +55,22 @@ def test_mqtt_knob_config_defaults_to_stopwatch_art_size():
     config = main.mqtt_knob_config()
 
     assert main.mqtt_art_options().size == 360
+    assert config["schema_version"] == 2
+    assert config["protocol"] == {
+        "name": "rotary-mqtt-knob",
+        "schema_version": 2,
+        "min_client_schema_version": 2,
+        "max_client_schema_version": 2,
+        "features": [
+            "control_state",
+            "library_browse",
+            "devices",
+            "command_request_id",
+            "idempotent_command_result",
+            "command_latency",
+            "retained_rgb565_art",
+        ],
+    }
     assert config["topics"]["control_state"] == "rotary/knob/control_state"
     assert config["retain"]["control_state"] is True
     assert config["http"]["art_url"] == (

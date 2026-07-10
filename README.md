@@ -571,7 +571,19 @@ The bridge computes the art byte hash from the cached RGB565 payload when possib
 fails, state still publishes and the HTTP art endpoint remains the source of truth for image headers.
 
 The retained `config` message advertises the active topics, HTTP base URL, art recipe, QoS, and
-supported commands/requests. The legacy retained `local-spotify-bridge/playback` envelope is still
+supported commands/requests. It also includes a `protocol` block:
+
+```json
+{
+  "name": "rotary-mqtt-knob",
+  "schema_version": 2,
+  "min_client_schema_version": 2,
+  "max_client_schema_version": 2
+}
+```
+
+Knobs should treat the config as compatible when their local schema version falls inside the
+advertised client range. The legacy retained `local-spotify-bridge/playback` envelope is still
 published for existing clients.
 
 Retained MQTT publishes are content-deduped per topic. If `state`, `config`, `status`, `devices`,
