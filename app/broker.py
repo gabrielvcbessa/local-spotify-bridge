@@ -69,6 +69,10 @@ class ConnectionBroker:
         self.last_mqtt_availability_at: str | None = None
         self.last_mqtt_activity: dict[str, Any] | None = None
         self.last_mqtt_activity_at: str | None = None
+        self.last_mqtt_command: dict[str, Any] | None = None
+        self.last_mqtt_command_at: str | None = None
+        self.last_mqtt_command_result: dict[str, Any] | None = None
+        self.last_mqtt_command_result_at: str | None = None
         self._mqtt_payload_fingerprints: dict[str, str] = {}
         self._forward_transition_expected_until = 0.0
         self._lock = asyncio.Lock()
@@ -136,6 +140,25 @@ class ConnectionBroker:
         self.last_mqtt_activity_at = datetime.now(UTC).isoformat()
         self.last_mqtt_activity = {"source": source, **(payload or {})}
 
+    def mark_mqtt_command_received(self, payload: dict[str, Any]) -> None:
+        self.last_mqtt_command_at = datetime.now(UTC).isoformat()
+        command_type = payload.get("type")
+        self.last_mqtt_command = {
+            "type": command_type if isinstance(command_type, str) else None,
+            "request_id": payload.get("request_id"),
+        }
+
+    def mark_mqtt_command_result(self, response: dict[str, Any]) -> None:
+        self.last_mqtt_command_result_at = datetime.now(UTC).isoformat()
+        self.last_mqtt_command_result = {
+            "ok": response.get("ok"),
+            "command": response.get("command"),
+            "request_id": response.get("request_id"),
+            "error": response.get("error"),
+            "state_version": response.get("state_version"),
+            "published_state": response.get("published_state"),
+        }
+
     def mqtt_availability_is_active(self, *, ttl_seconds: float) -> bool:
         if self.last_mqtt_activity_at is None:
             return False
@@ -162,6 +185,14 @@ class ConnectionBroker:
             "mqtt_last_activity_at": self.last_mqtt_activity_at,
             "mqtt_last_activity": self.last_mqtt_activity,
             "ttl_seconds": ttl_seconds,
+        }
+
+    def mqtt_command_status(self) -> dict[str, Any]:
+        return {
+            "last_command_at": self.last_mqtt_command_at,
+            "last_command": self.last_mqtt_command,
+            "last_result_at": self.last_mqtt_command_result_at,
+            "last_result": self.last_mqtt_command_result,
         }
 
     async def add_websocket(self, websocket: WebSocket) -> None:
@@ -331,10 +362,13 @@ class ConnectionBroker:
     ) -> None:
         if handler is None:
             return
+        message: dict[str, Any] | None = None
         try:
             message = json.loads(payload)
             if not isinstance(message, dict):
                 raise ValueError(f"MQTT {label} payload must be a JSON object.")
+            if label == "command":
+                self.mark_mqtt_command_received(message)
             result = await handler(message)
             response = {
                 "ok": True,
@@ -347,6 +381,12 @@ class ConnectionBroker:
                 response["result"] = result
         except Exception as exc:
             response = {"ok": False, "error": str(exc)}
+            if message is not None:
+                response["request_id"] = message.get("request_id")
+                response[label] = message.get("type")
+
+        if label == "command":
+            self.mark_mqtt_command_result(response)
 
         if self._mqtt_client is not None:
             text = json.dumps(response)

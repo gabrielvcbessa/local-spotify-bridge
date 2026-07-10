@@ -192,6 +192,7 @@ async def health() -> dict[str, Any]:
         "mqtt_topics": broker.mqtt_topics() if settings.mqtt_enabled else None,
         "mqtt_availability": broker.last_mqtt_availability if settings.mqtt_enabled else None,
         "mqtt_availability_at": broker.last_mqtt_availability_at if settings.mqtt_enabled else None,
+        "mqtt_commands": broker.mqtt_command_status() if settings.mqtt_enabled else None,
     }
 
 
@@ -1776,6 +1777,7 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
     if command_type == "play_pause":
         if broker.current_state and broker.current_state.is_playing:
             await spotify.pause(device_id=explicit_device_id(command.get("device_id")))
+            follow_up_refresh = True
         else:
             await spotify.play(device_id=explicit_device_id(command.get("device_id")))
             follow_up_refresh = True
@@ -1785,6 +1787,7 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
         follow_up_refresh = True
     elif command_type == "pause":
         await spotify.pause(device_id=explicit_device_id(command.get("device_id")))
+        follow_up_refresh = True
     elif command_type == "next":
         await spotify.next_track(device_id=explicit_device_id(command.get("device_id")))
         broker.mark_forward_transition_expected()

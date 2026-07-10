@@ -254,6 +254,57 @@ async def test_mqtt_command_publishes_non_retained_result():
         "command": "next",
         "seen": "next",
     }
+    assert broker.mqtt_command_status()["last_command"] == {"type": "next", "request_id": None}
+    assert broker.mqtt_command_status()["last_command_at"] is not None
+    assert broker.mqtt_command_status()["last_result"] == {
+        "ok": True,
+        "command": "next",
+        "request_id": None,
+        "error": None,
+        "state_version": None,
+        "published_state": None,
+    }
+    assert broker.mqtt_command_status()["last_result_at"] is not None
+
+
+@pytest.mark.anyio
+async def test_mqtt_command_status_keeps_failed_command_context():
+    broker = ConnectionBroker(
+        Settings(
+            MQTT_ENABLED=True,
+            MQTT_KNOB_TOPIC_PREFIX="rotary",
+            MQTT_KNOB_DEVICE_ID="kitchen",
+        )
+    )
+    mqtt = FakeMqttClient()
+    broker._mqtt_client = mqtt
+
+    async def command_handler(_command):
+        raise ValueError("spotify lagged")
+
+    broker.set_mqtt_command_handler(command_handler)
+
+    await broker._handle_mqtt_message(
+        "rotary/kitchen/command",
+        '{"request_id":"knob-9","type":"pause"}',
+    )
+
+    result = json.loads(mqtt.published[0][1])
+    assert result == {
+        "ok": False,
+        "error": "spotify lagged",
+        "request_id": "knob-9",
+        "command": "pause",
+    }
+    assert broker.mqtt_command_status()["last_command"] == {"type": "pause", "request_id": "knob-9"}
+    assert broker.mqtt_command_status()["last_result"] == {
+        "ok": False,
+        "command": "pause",
+        "request_id": "knob-9",
+        "error": "spotify lagged",
+        "state_version": None,
+        "published_state": None,
+    }
 
 
 @pytest.mark.anyio

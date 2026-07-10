@@ -148,14 +148,20 @@ interval. `SPOTIFY_BACKGROUND_POLL_INTERVAL_SECONDS` is the minimum devices poll
 defaulting to 30 seconds while a consumer is active. `SPOTIFY_PLAYLIST_POLL_INTERVAL_SECONDS`
 is the automatic playlist/library polling interval and defaults to 2 hours. `SPOTIFY_IDLE_POLL_INTERVAL_SECONDS`
 is the shared lower bound for all Spotify polling when no WebSocket client is connected and no recent
-MQTT availability heartbeat is online, but it never makes a slower poller faster; playlists still use
-the playlist interval if it is larger. Devices and the full playlist index publish MQTT retained
-updates only when their semantic payload changes. Spotify `429 Retry-After` cooldowns are tracked by
-endpoint group, so a playlist cooldown does not block `/me/player` now-playing refreshes.
+MQTT listener activity has arrived, but it never makes a slower poller faster; playlists still use
+the playlist interval if it is larger. Listener activity includes retained availability heartbeats,
+non-retained commands, and non-retained requests. An `availability` payload with `online:false`
+marks the MQTT listener inactive until a fresh command, request, or online heartbeat arrives. Devices
+and the full playlist index publish MQTT retained updates only when their semantic payload changes.
+Spotify `429 Retry-After` cooldowns are tracked by endpoint group, so a playlist cooldown does not
+block `/me/player` now-playing refreshes.
 
 `/health.polling` reports whether the bridge currently detects active consumers and which active or
 idle lower bounds are being used. That makes it easy to confirm whether the bridge is in fast
-knob-facing mode or quiet idle mode.
+knob-facing mode or quiet idle mode. `/health.consumers.mqtt_last_activity_at` and
+`/health.consumers.mqtt_last_activity` show the activity source that is keeping the bridge active.
+`/health.mqtt_commands` shows the most recent MQTT command and command result, which is useful when
+debugging a button press that reached the bridge but took time to settle through Spotify Connect.
 
 Useful tuning settings:
 
@@ -270,10 +276,18 @@ curl -X POST http://localhost:8090/v1/control/transfer \
 
 After every successful command, the bridge immediately refreshes playback state from Spotify and
 publishes changed state through WebSocket and MQTT; it does not wait for the next
-`POLL_INTERVAL_SECONDS` tick. Track/source-changing commands such as `play`, `next`, `previous`,
-`select_source`, `play_library_item`, and `transfer` also schedule short follow-up refreshes so
-Spotify Connect has time to settle before the bridge publishes the final track/device state. Tune
-those follow-up delays with `COMMAND_FOLLOWUP_REFRESH_DELAYS_SECONDS`.
+`POLL_INTERVAL_SECONDS` tick. Playback-changing commands such as `play`, `pause`, `play_pause`,
+`next`, `previous`, `select_source`, `play_library_item`, and `transfer` also schedule short
+follow-up refreshes so Spotify Connect has time to settle before the bridge publishes the final
+track/device state. `transfer` refreshes the retained devices topic as well, so a target-device
+change is visible without waiting for the background devices poller. Tune those follow-up delays
+with `COMMAND_FOLLOWUP_REFRESH_DELAYS_SECONDS`.
+
+For low-power MQTT controllers, keep the listener heartbeat separate from richer telemetry. The M5
+StopWatch firmware should publish a minimal retained `availability` heartbeat comfortably inside
+`ACTIVE_CONSUMER_TTL_SECONDS` while awake, for example every 30-60 seconds with the default 120-second
+TTL. Telemetry can stay slower or idle-aware because any incoming command or request also refreshes
+listener activity immediately.
 
 When `SPOTIFY_PRELOAD_NEXT_ENABLED=true`, playback refreshes also make a best-effort request to
 Spotify's queue endpoint and expose the first upcoming track as `next_track` in `/v1/state`,

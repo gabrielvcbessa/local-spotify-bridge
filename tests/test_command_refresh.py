@@ -264,4 +264,8 @@ async def test_mqtt_play_pause_does_not_use_implicit_target_device(monkeypatch):
         ("play", None),
         ("pause", "speaker-1"),
     ]
-    assert len(refreshes) == 3
+    assert refreshes == [
+        main.settings.command_followup_refresh_delays,
+        main.settings.command_followup_refresh_delays,
+        main.settings.command_followup_refresh_delays,
+    ]

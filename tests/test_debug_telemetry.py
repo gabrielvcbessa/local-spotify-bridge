@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 
+import app.main as main
 from app.main import app
 from app.telemetry import BridgeTelemetry, telemetry
 
@@ -111,7 +112,8 @@ def test_health_exposes_consumer_detection_and_current_polling_thresholds():
     response = TestClient(app).get("/health")
 
     assert response.status_code == 200
-    polling = response.json()["polling"]
+    payload = response.json()
+    polling = payload["polling"]
     assert polling["mode"] in {"active", "idle"}
     assert isinstance(polling["active_consumers_detected"], bool)
     assert "playback_current_lower_bound_seconds" in polling
@@ -120,6 +122,49 @@ def test_health_exposes_consumer_detection_and_current_polling_thresholds():
     assert "playback_effective_interval_seconds" in polling
     assert "background_effective_interval_seconds" in polling
     assert "playlist_effective_interval_seconds" in polling
+    assert "mqtt_commands" in payload
+
+
+def test_health_exposes_recent_mqtt_command_status(monkeypatch):
+    previous_enabled = main.settings.mqtt_enabled
+    previous_command = main.broker.last_mqtt_command
+    previous_command_at = main.broker.last_mqtt_command_at
+    previous_result = main.broker.last_mqtt_command_result
+    previous_result_at = main.broker.last_mqtt_command_result_at
+    try:
+        monkeypatch.setattr(main.settings, "mqtt_enabled", True)
+        main.broker.mark_mqtt_command_received({"request_id": "knob-3", "type": "pause"})
+        main.broker.mark_mqtt_command_result(
+            {
+                "ok": True,
+                "request_id": "knob-3",
+                "command": "pause",
+                "state_version": 42,
+                "published_state": True,
+            }
+        )
+
+        response = TestClient(app).get("/health")
+    finally:
+        monkeypatch.setattr(main.settings, "mqtt_enabled", previous_enabled)
+        main.broker.last_mqtt_command = previous_command
+        main.broker.last_mqtt_command_at = previous_command_at
+        main.broker.last_mqtt_command_result = previous_result
+        main.broker.last_mqtt_command_result_at = previous_result_at
+
+    assert response.status_code == 200
+    commands = response.json()["mqtt_commands"]
+    assert commands["last_command"] == {"type": "pause", "request_id": "knob-3"}
+    assert commands["last_command_at"] is not None
+    assert commands["last_result"] == {
+        "ok": True,
+        "command": "pause",
+        "request_id": "knob-3",
+        "error": None,
+        "state_version": 42,
+        "published_state": True,
+    }
+    assert commands["last_result_at"] is not None
 
 
 def test_debug_dashboard_serves_html():
