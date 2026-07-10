@@ -14,6 +14,7 @@ from .context_cache import PlaylistNameCache, playback_context_parts, schedule_p
 from .knob import knob_snapshot
 from .knob_mqtt import devices_payload, envelope, library_item_payload, library_page_payload, library_root_payload, status_payload
 from .models import PlaybackCommand, PlaybackSnapshot, SeekCommand, TargetDeviceCommand, TransferPlaybackCommand, VolumeCommand
+from .mqtt_contract import mqtt_control_state_payload, mqtt_knob_config_payload
 from .spotify import (
     SpotifyAuthNotConfigured,
     SpotifyClient,
@@ -1349,105 +1350,17 @@ async def mqtt_knob_snapshot(version: int, state) -> dict[str, Any]:
 
 def mqtt_knob_config() -> dict[str, Any]:
     art_options = mqtt_art_options()
-    topics = broker.mqtt_topics()
-    schema_version = 2
-    return {
-        "schema_version": schema_version,
-        "protocol": {
-            "name": "rotary-mqtt-knob",
-            "schema_version": schema_version,
-            "min_client_schema_version": 2,
-            "max_client_schema_version": 2,
-            "features": [
-                "control_state",
-                "library_browse",
-                "devices",
-                "command_request_id",
-                "idempotent_command_result",
-                "command_latency",
-                "retained_rgb565_art",
-            ],
-        },
-        "device_id": settings.mqtt_knob_device_id,
-        "qos": settings.mqtt_qos,
-        "retain": {
-            "state": True,
-            "control_state": True,
-            "config": True,
-            "library_root": True,
-            "library_page": True,
-            "library_playlists": True,
-            "devices": True,
-            "status": True,
-            "command_result": False,
-            "request_result": False,
-        },
-        "topics": topics,
-        "http": {
-            "base_url": mqtt_base_url(),
-            "snapshot_url": f"{mqtt_base_url()}/v1/knob/snapshot",
-            "art_url": (
-                f"{mqtt_base_url()}/v1/knob/art/current.rgb565"
-                f"?size={art_options.size}&format=rotary-lvgl&variant={art_options.variant}"
-            ),
-        },
-        "art": {
-            "size": art_options.size,
-            "format": "rgb565",
-            "swap": art_options.swap,
-            "variant": art_options.variant,
-            "byte_order": art_options.byte_order,
-            "topics": {
-                "current": topics["art_current"],
-                "next": topics["art_next"],
-                "previous": topics["art_previous"],
-            },
-        },
-        "commands": [
-            "play_pause",
-            "play",
-            "pause",
-            "next",
-            "previous",
-            "volume_set",
-            "seek",
-            "select_source",
-            "transfer",
-            "shuffle_set",
-            "repeat_set",
-            "play_library_item",
-        ],
-        "requests": ["library_root", "library_page", "library_playlists", "devices", "refresh"],
-        "limits": {
-            "knob_visible_rows": 3,
-            "library_page_limit": 3,
-            "max_title_chars": 64,
-            "max_subtitle_chars": 64,
-        },
-    }
+    return mqtt_knob_config_payload(
+        device_id=settings.mqtt_knob_device_id,
+        qos=settings.mqtt_qos,
+        topics=broker.mqtt_topics(),
+        base_url=mqtt_base_url(),
+        art_options=art_options,
+    )
 
 
 def mqtt_control_state(version: int, state: PlaybackSnapshot | None) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "playing": bool(state.is_playing) if state else False,
-        "track_id": state.item_id if state else None,
-        "track_uri": state.item_uri if state else None,
-        "title": state.title if state else None,
-        "artist_text": ", ".join(state.artists) if state and state.artists else None,
-        "progress_ms": state.progress_ms if state else None,
-        "duration_ms": state.duration_ms if state else None,
-        "device": {
-            "id": state.device_id if state else None,
-            "name": state.device_name if state else None,
-            "type": state.device_type if state else None,
-            "is_active": state.device_is_active if state else None,
-            "volume_percent": state.device_volume_percent if state else None,
-            "volume_control_supported": state.volume_control_supported if state else False,
-        },
-        "shuffle": state.shuffle_state if state else None,
-        "repeat": state.repeat_state if state else None,
-    }
-    return envelope(version=version, payload=payload)
+    return mqtt_control_state_payload(version, state)
 
 
 def mqtt_art_options() -> ArtOptions:
