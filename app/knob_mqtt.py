@@ -142,13 +142,29 @@ def status_payload(
     target_device_id = target.device_id if target else None
     target_device_name = target.device_name if target else None
     active_device_id = current_state.device_id if current_state else None
-    status = "ready" if last_error is None else "degraded"
+    target_risks = target_readiness.get("risks", []) if isinstance(target_readiness, dict) else []
+    target_safe = bool(target_readiness.get("safe_for_live_control")) if isinstance(target_readiness, dict) else True
+    if not spotify_configured:
+        status = "spotify_not_configured"
+        message = "Pair Spotify in the bridge setup console."
+    elif last_error is not None:
+        status = "auth_expired" if "401" in last_error or "unauthorized" in last_error.casefold() else "backend_unreachable"
+        message = last_error
+    elif current_state is None:
+        status = "no_active_playback"
+        message = "Start Spotify playback on a target device."
+    elif target_risks and not target_safe:
+        status = "target_not_ready"
+        message = "Target device is not ready for live control."
+    else:
+        status = "ready"
+        message = "Ready"
     payload = {
         "status": status,
-        "message": "Ready" if last_error is None else last_error,
-        "ok": last_error is None,
+        "message": message,
+        "ok": status == "ready",
         "spotify_configured": spotify_configured,
-        "spotify_reachable": last_error is None,
+        "spotify_reachable": spotify_configured and last_error is None,
         "mqtt_connected": mqtt_connected,
         "last_poll_at": last_poll_at,
         "last_error": last_error,

@@ -7,6 +7,7 @@ from app.broker import ConnectionBroker, mqtt_payload_fingerprint
 from app.config import Settings
 from app.knob_mqtt import status_payload
 from app.models import PlaybackSnapshot
+from app.store import TargetDevice
 
 
 class FakeMqttClient:
@@ -261,7 +262,7 @@ def test_mqtt_status_payload_exposes_m5_status_fields_and_command_pulses():
         spotify_configured=True,
         last_poll_at="2026-07-06T10:00:00+00:00",
         last_error=None,
-        current_state=None,
+        current_state=PlaybackSnapshot(device_id="speaker-1"),
         target=None,
         mqtt_connected=True,
         command_pulse={"type": "play", "request_id": "knob-play-1", "completed_at": "2026-07-06T10:00:01+00:00"},
@@ -280,7 +281,7 @@ def test_mqtt_status_payload_exposes_m5_status_fields_and_command_pulses():
         spotify_configured=True,
         last_poll_at="2026-07-06T10:00:00+00:00",
         last_error=None,
-        current_state=None,
+        current_state=PlaybackSnapshot(device_id="speaker-1"),
         target=None,
         mqtt_connected=True,
         command_pulse={"type": "next", "completed_at": "2026-07-06T10:00:02+00:00"},
@@ -290,9 +291,56 @@ def test_mqtt_status_payload_exposes_m5_status_fields_and_command_pulses():
     assert ready["message"] == "Ready"
     assert ready["last_command"]["type"] == "play"
     assert ready["last_command"]["request_id"] == "knob-play-1"
-    assert degraded["status"] == "degraded"
+    assert degraded["status"] == "backend_unreachable"
     assert degraded["message"] == "Spotify offline"
     assert mqtt_payload_fingerprint(ready) != mqtt_payload_fingerprint(next_pulse)
+
+
+def test_mqtt_status_payload_exposes_product_setup_states():
+    unconfigured = status_payload(
+        version=1,
+        spotify_configured=False,
+        last_poll_at=None,
+        last_error=None,
+        current_state=None,
+        target=None,
+        mqtt_connected=True,
+    )
+    no_playback = status_payload(
+        version=1,
+        spotify_configured=True,
+        last_poll_at="2026-07-06T10:00:00+00:00",
+        last_error=None,
+        current_state=None,
+        target=None,
+        mqtt_connected=True,
+    )
+    auth_expired = status_payload(
+        version=1,
+        spotify_configured=True,
+        last_poll_at="2026-07-06T10:00:00+00:00",
+        last_error="Spotify returned 401 unauthorized",
+        current_state=None,
+        target=None,
+        mqtt_connected=True,
+    )
+    target_not_ready = status_payload(
+        version=1,
+        spotify_configured=True,
+        last_poll_at="2026-07-06T10:00:00+00:00",
+        last_error=None,
+        current_state=PlaybackSnapshot(device_id="speaker-1"),
+        target=TargetDevice(device_id="speaker-2"),
+        mqtt_connected=True,
+        target_readiness={"safe_for_live_control": False, "risks": ["target_not_found"]},
+    )
+
+    assert unconfigured["status"] == "spotify_not_configured"
+    assert unconfigured["ok"] is False
+    assert unconfigured["spotify_reachable"] is False
+    assert no_playback["status"] == "no_active_playback"
+    assert auth_expired["status"] == "auth_expired"
+    assert target_not_ready["status"] == "target_not_ready"
 
 
 def test_mqtt_status_payload_includes_target_readiness():
