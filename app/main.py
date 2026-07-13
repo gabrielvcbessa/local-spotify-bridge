@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from io import BytesIO
 from typing import Annotated, Any
 
@@ -39,6 +40,45 @@ broker = ConnectionBroker(settings)
 
 def has_active_consumers() -> bool:
     return broker.has_active_consumers(ttl_seconds=settings.active_consumer_ttl_seconds)
+
+
+def consumer_idle_explanation(consumer_status: dict[str, Any]) -> dict[str, Any]:
+    websocket_count = int(consumer_status.get("websocket_count") or 0)
+    ttl_seconds = float(consumer_status.get("ttl_seconds") or settings.active_consumer_ttl_seconds)
+    last_activity_at = consumer_status.get("mqtt_last_activity_at")
+    last_activity = consumer_status.get("mqtt_last_activity")
+    mqtt_age_seconds = None
+    if isinstance(last_activity_at, str):
+        try:
+            mqtt_age_seconds = (datetime.now(UTC) - datetime.fromisoformat(last_activity_at)).total_seconds()
+        except ValueError:
+            mqtt_age_seconds = None
+
+    offline = isinstance(last_activity, dict) and last_activity.get("source") == "availability" and last_activity.get("online") is False
+    if websocket_count > 0:
+        reason = "websocket_connected"
+    elif offline:
+        reason = "mqtt_availability_offline"
+    elif consumer_status.get("mqtt_active"):
+        reason = "recent_mqtt_activity"
+    elif last_activity_at is None:
+        reason = "no_websocket_or_mqtt_activity"
+    elif mqtt_age_seconds is None:
+        reason = "invalid_mqtt_activity_timestamp"
+    else:
+        reason = "mqtt_activity_expired"
+
+    return {
+        "active": bool(consumer_status.get("active")),
+        "reason": reason,
+        "websocket_count": websocket_count,
+        "mqtt_active": bool(consumer_status.get("mqtt_active")),
+        "mqtt_last_activity_at": last_activity_at,
+        "mqtt_last_activity_source": last_activity.get("source") if isinstance(last_activity, dict) else None,
+        "mqtt_last_activity_age_seconds": mqtt_age_seconds,
+        "mqtt_ttl_seconds": ttl_seconds,
+        "mqtt_offline": offline,
+    }
 
 
 poller = StatePoller(
@@ -138,6 +178,8 @@ async def spotify_auth_not_configured_handler(_, exc: SpotifyAuthNotConfigured):
 async def health() -> dict[str, Any]:
     target = store.get_target_device()
     consumer_active = has_active_consumers()
+    consumers = broker.consumer_status(ttl_seconds=settings.active_consumer_ttl_seconds)
+    idle_explanation = consumer_idle_explanation(consumers)
     playback_lower_bound = (
         settings.poll_interval_seconds
         if consumer_active
@@ -166,7 +208,8 @@ async def health() -> dict[str, Any]:
         "target_device_id": target.device_id if target else None,
         "playlist_name_cache": playlist_name_cache.status(),
         "art_cache": art_cache.status(),
-        "consumers": broker.consumer_status(ttl_seconds=settings.active_consumer_ttl_seconds),
+        "consumers": consumers,
+        "consumer_idle_explanation": idle_explanation,
         "rate_limit": spotify.rate_limit_statuses(
             {
                 "playback": settings.poll_interval_seconds,
@@ -195,6 +238,7 @@ async def health() -> dict[str, Any]:
         "mqtt_availability": broker.last_mqtt_availability if settings.mqtt_enabled else None,
         "mqtt_availability_at": broker.last_mqtt_availability_at if settings.mqtt_enabled else None,
         "mqtt_commands": broker.mqtt_command_status() if settings.mqtt_enabled else None,
+        "mqtt_retained": broker.retained_payload_status() if settings.mqtt_enabled else None,
     }
 
 
@@ -438,6 +482,12 @@ def debug_dashboard_html() -> str:
     </section>
 
     <section class="panel" style="margin-top: 16px;">
+      <h2>Consumer Decision</h2>
+      <div class="metric" id="consumerReason">-</div>
+      <div class="muted" id="consumerReasonDetail"></div>
+    </section>
+
+    <section class="panel" style="margin-top: 16px;">
       <h2>MQTT Command / Request History</h2>
       <div class="table-scroll">
         <table>
@@ -452,6 +502,25 @@ def debug_dashboard_html() -> str:
             </tr>
           </thead>
           <tbody id="mqttHistoryRows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-top: 16px;">
+      <h2>Retained MQTT Payloads</h2>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Topic</th>
+              <th>Kind</th>
+              <th>Bytes</th>
+              <th>Status</th>
+              <th>Updated</th>
+              <th>Preview</th>
+            </tr>
+          </thead>
+          <tbody id="mqttRetainedRows"></tbody>
         </table>
       </div>
     </section>
@@ -591,6 +660,13 @@ def debug_dashboard_html() -> str:
       document.getElementById("consumersActive").textContent = health.polling.active_consumers_detected ? "active" : "idle";
       document.getElementById("consumersDetail").textContent =
         "WS " + health.consumers.websocket_count + ", MQTT " + (health.consumers.mqtt_active ? "active" : "inactive");
+      const idle = health.consumer_idle_explanation || {};
+      const idleAge = idle.mqtt_last_activity_age_seconds == null ? "no MQTT activity" : Math.round(idle.mqtt_last_activity_age_seconds) + "s ago";
+      document.getElementById("consumerReason").textContent = idle.reason || "-";
+      document.getElementById("consumerReasonDetail").textContent =
+        "WS " + (idle.websocket_count || 0) + ", MQTT " + (idle.mqtt_active ? "active" : "inactive") +
+        ", source " + (idle.mqtt_last_activity_source || "-") + ", " + idleAge +
+        ", TTL " + (idle.mqtt_ttl_seconds == null ? "-" : Math.round(idle.mqtt_ttl_seconds) + "s");
       document.getElementById("storedEvents").textContent = payload.requests.stored_events;
       document.getElementById("retention").textContent = "Retention " + Math.round(payload.requests.retention_seconds / 3600) + "h";
       const commandStatus = health.mqtt_commands || {};
@@ -629,6 +705,28 @@ def debug_dashboard_html() -> str:
           tr.appendChild(cell(item.latency_ms == null ? "-" : Math.round(item.latency_ms) + "ms"));
           tr.appendChild(cell(resultBits.join(", ") || "-"));
           historyRows.appendChild(tr);
+        }
+      }
+      const retainedRows = document.getElementById("mqttRetainedRows");
+      retainedRows.replaceChildren();
+      const retained = health.mqtt_retained || [];
+      if (!retained.length) {
+        const tr = document.createElement("tr");
+        const td = cell("No retained MQTT payloads published in this process yet");
+        td.colSpan = 6;
+        tr.appendChild(td);
+        retainedRows.appendChild(tr);
+      } else {
+        for (const item of retained) {
+          const tr = document.createElement("tr");
+          const status = item.published ? "published" : "duplicate";
+          tr.appendChild(codeCell(item.topic_key || item.topic || "-"));
+          tr.appendChild(cell(item.payload_kind || "-"));
+          tr.appendChild(cell(item.payload_bytes == null ? "-" : item.payload_bytes));
+          tr.appendChild(cell(status, item.published ? "ok" : "warn"));
+          tr.appendChild(cell(item.updated_at ? new Date(item.updated_at).toLocaleTimeString() : "-"));
+          tr.appendChild(codeCell(item.preview || item.fingerprint || "-"));
+          retainedRows.appendChild(tr);
         }
       }
 

@@ -123,6 +123,8 @@ def test_health_exposes_consumer_detection_and_current_polling_thresholds():
     assert "background_effective_interval_seconds" in polling
     assert "playlist_effective_interval_seconds" in polling
     assert "mqtt_commands" in payload
+    assert "consumer_idle_explanation" in payload
+    assert "reason" in payload["consumer_idle_explanation"]
 
 
 def test_health_exposes_recent_mqtt_command_status(monkeypatch):
@@ -161,6 +163,7 @@ def test_health_exposes_recent_mqtt_command_status(monkeypatch):
         "command": "pause",
         "request_id": "knob-3",
         "error": None,
+        "error_envelope": None,
         "state_version": 42,
         "published_state": True,
         "idempotent_replay": None,
@@ -174,6 +177,42 @@ def test_health_exposes_recent_mqtt_command_status(monkeypatch):
     assert "recent" in commands
 
 
+def test_health_explains_idle_decision_and_retained_payloads(monkeypatch):
+    previous_enabled = main.settings.mqtt_enabled
+    previous_activity = main.broker.last_mqtt_activity
+    previous_activity_at = main.broker.last_mqtt_activity_at
+    previous_retained = main.broker._mqtt_retained_payloads.copy()
+    try:
+        monkeypatch.setattr(main.settings, "mqtt_enabled", True)
+        main.broker.last_mqtt_activity = {"source": "availability", "online": False}
+        main.broker.last_mqtt_activity_at = "2026-07-13T00:00:00+00:00"
+        main.broker._mqtt_retained_payloads.clear()
+        main.broker._mqtt_retained_payloads["rotary/kitchen/state"] = {
+            "topic": "rotary/kitchen/state",
+            "topic_key": "state",
+            "payload_kind": "json",
+            "payload_bytes": 42,
+            "fingerprint": "hash:state",
+            "published": True,
+            "updated_at": "2026-07-13T00:00:01+00:00",
+            "preview": '{"ok":true}',
+        }
+
+        response = TestClient(app).get("/health")
+    finally:
+        monkeypatch.setattr(main.settings, "mqtt_enabled", previous_enabled)
+        main.broker.last_mqtt_activity = previous_activity
+        main.broker.last_mqtt_activity_at = previous_activity_at
+        main.broker._mqtt_retained_payloads.clear()
+        main.broker._mqtt_retained_payloads.update(previous_retained)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["consumer_idle_explanation"]["reason"] == "mqtt_availability_offline"
+    assert payload["consumer_idle_explanation"]["mqtt_offline"] is True
+    assert payload["mqtt_retained"][0]["topic_key"] == "state"
+
+
 def test_debug_dashboard_serves_html():
     response = TestClient(app).get("/debug")
 
@@ -182,7 +221,11 @@ def test_debug_dashboard_serves_html():
     assert "/v1/debug/status" in response.text
     assert "/v1/debug/events" in response.text
     assert "Last MQTT Command" in response.text
+    assert "Consumer Decision" in response.text
     assert "MQTT Command / Request History" in response.text
+    assert "Retained MQTT Payloads" in response.text
+    assert "mqttRetainedRows" in response.text
+    assert "consumerReasonDetail" in response.text
     assert "mqttHistoryRows" in response.text
     assert "lastCommandDetail" in response.text
     assert "payload-toggle" in response.text

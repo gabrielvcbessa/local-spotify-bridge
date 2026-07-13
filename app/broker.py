@@ -78,6 +78,7 @@ class ConnectionBroker:
         self._mqtt_request_results_by_request_id: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._mqtt_rpc_history: deque[dict[str, Any]] = deque(maxlen=64)
         self._mqtt_payload_fingerprints: dict[str, str] = {}
+        self._mqtt_retained_payloads: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._forward_transition_expected_until = 0.0
         self._lock = asyncio.Lock()
 
@@ -159,6 +160,7 @@ class ConnectionBroker:
             "command": response.get("command"),
             "request_id": response.get("request_id"),
             "error": response.get("error"),
+            "error_envelope": response.get("error_envelope"),
             "state_version": response.get("state_version"),
             "published_state": response.get("published_state"),
             "idempotent_replay": response.get("idempotent_replay"),
@@ -175,6 +177,7 @@ class ConnectionBroker:
                 "request_id": response.get("request_id") if response.get("request_id") is not None else (payload or {}).get("request_id"),
                 "ok": response.get("ok"),
                 "error": response.get("error"),
+                "error_envelope": response.get("error_envelope"),
                 "state_version": response.get("state_version"),
                 "published_state": response.get("published_state"),
                 "published_topic": response.get("published_topic"),
@@ -244,6 +247,9 @@ class ConnectionBroker:
             "mqtt_last_activity": self.last_mqtt_activity,
             "ttl_seconds": ttl_seconds,
         }
+
+    def retained_payload_status(self) -> list[dict[str, Any]]:
+        return list(self._mqtt_retained_payloads.values())
 
     def mqtt_command_status(self) -> dict[str, Any]:
         return {
@@ -358,6 +364,12 @@ class ConnectionBroker:
         device_id = self._settings.mqtt_knob_device_id.strip("/")
         return f"{prefix}/{device_id}/{leaf}"
 
+    def mqtt_topic_key(self, topic: str) -> str:
+        prefix = self.mqtt_topic("")
+        if topic.startswith(prefix):
+            return topic[len(prefix) :]
+        return topic
+
     def mqtt_topics(self) -> dict[str, str]:
         return {
             "legacy_playback": f"{self._settings.mqtt_topic_prefix}/playback",
@@ -451,7 +463,7 @@ class ConnectionBroker:
             else:
                 response["result"] = result
         except Exception as exc:
-            response = {"ok": False, "error": str(exc)}
+            response = {"ok": False, "error": str(exc), "error_envelope": mqtt_error_envelope(exc, label=label)}
             if message is not None:
                 response["request_id"] = message.get("request_id")
                 response[label] = message.get("type")
@@ -501,13 +513,22 @@ class ConnectionBroker:
             return False
 
         text = json.dumps(payload)
+        payload_bytes = len(text.encode())
         if retain:
             fingerprint = mqtt_payload_fingerprint(payload)
             if self._mqtt_payload_fingerprints.get(topic) == fingerprint:
+                self._remember_retained_payload(
+                    topic=topic,
+                    payload_kind="json",
+                    payload_bytes=payload_bytes,
+                    fingerprint=fingerprint,
+                    published=False,
+                    detail=text,
+                )
                 telemetry.record_mqtt_publish(
                     topic=topic,
                     payload_kind="json",
-                    payload_bytes=len(text.encode()),
+                    payload_bytes=payload_bytes,
                     retain=retain,
                     qos=self._settings.mqtt_qos,
                     published=False,
@@ -516,12 +537,20 @@ class ConnectionBroker:
                 )
                 return False
             self._mqtt_payload_fingerprints[topic] = fingerprint
+            self._remember_retained_payload(
+                topic=topic,
+                payload_kind="json",
+                payload_bytes=payload_bytes,
+                fingerprint=fingerprint,
+                published=True,
+                detail=text,
+            )
 
         self._mqtt_client.publish(topic, text, qos=self._settings.mqtt_qos, retain=retain)
         telemetry.record_mqtt_publish(
             topic=topic,
             payload_kind="json",
-            payload_bytes=len(text.encode()),
+            payload_bytes=payload_bytes,
             retain=retain,
             qos=self._settings.mqtt_qos,
             published=True,
@@ -535,7 +564,16 @@ class ConnectionBroker:
 
         if retain:
             fingerprint = f"bytes:{hashlib.sha256(payload).hexdigest()}"
+            detail = f"<{len(payload)} binary bytes sha256={hashlib.sha256(payload).hexdigest()}>"
             if self._mqtt_payload_fingerprints.get(topic) == fingerprint:
+                self._remember_retained_payload(
+                    topic=topic,
+                    payload_kind="bytes",
+                    payload_bytes=len(payload),
+                    fingerprint=fingerprint,
+                    published=False,
+                    detail=detail,
+                )
                 telemetry.record_mqtt_publish(
                     topic=topic,
                     payload_kind="bytes",
@@ -544,10 +582,18 @@ class ConnectionBroker:
                     qos=self._settings.mqtt_qos,
                     published=False,
                     skipped_reason="duplicate_retained_payload",
-                    detail=f"<{len(payload)} binary bytes sha256={hashlib.sha256(payload).hexdigest()}>",
+                    detail=detail,
                 )
                 return False
             self._mqtt_payload_fingerprints[topic] = fingerprint
+            self._remember_retained_payload(
+                topic=topic,
+                payload_kind="bytes",
+                payload_bytes=len(payload),
+                fingerprint=fingerprint,
+                published=True,
+                detail=detail,
+            )
 
         self._mqtt_client.publish(topic, payload, qos=self._settings.mqtt_qos, retain=retain)
         telemetry.record_mqtt_publish(
@@ -561,6 +607,31 @@ class ConnectionBroker:
         )
         return True
 
+    def _remember_retained_payload(
+        self,
+        *,
+        topic: str,
+        payload_kind: str,
+        payload_bytes: int,
+        fingerprint: str,
+        published: bool,
+        detail: str,
+    ) -> None:
+        preview = detail if len(detail) <= 600 else detail[:600] + "..."
+        self._mqtt_retained_payloads[topic] = {
+            "topic": topic,
+            "topic_key": self.mqtt_topic_key(topic),
+            "payload_kind": payload_kind,
+            "payload_bytes": payload_bytes,
+            "fingerprint": fingerprint,
+            "published": published,
+            "updated_at": datetime.now(UTC).isoformat(),
+            "preview": preview,
+        }
+        self._mqtt_retained_payloads.move_to_end(topic, last=False)
+        while len(self._mqtt_retained_payloads) > 64:
+            self._mqtt_retained_payloads.popitem(last=True)
+
 
 def mqtt_payload_fingerprint(payload: dict[str, Any]) -> str:
     if isinstance(payload.get("payload_hash"), str):
@@ -573,6 +644,17 @@ def mqtt_payload_fingerprint(payload: dict[str, Any]) -> str:
     normalized = strip_mqtt_volatile_fields(payload)
     encoded = json.dumps(normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
     return hashlib.sha256(encoded).hexdigest()
+
+
+def mqtt_error_envelope(exc: Exception, *, label: str) -> dict[str, Any]:
+    error_type = type(exc).__name__
+    code = "invalid_payload" if isinstance(exc, (json.JSONDecodeError, ValueError, TypeError)) else "handler_error"
+    return {
+        "code": code,
+        "type": error_type,
+        "message": str(exc),
+        "source": f"mqtt_{label}",
+    }
 
 
 def strip_mqtt_volatile_fields(value: Any) -> Any:

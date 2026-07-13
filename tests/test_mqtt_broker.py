@@ -120,6 +120,35 @@ async def test_mqtt_retained_publish_skips_duplicate_payloads_by_topic():
         "rotary/kitchen/devices",
         "rotary/kitchen/status",
     ]
+    retained = broker.retained_payload_status()
+    retained_by_key = {entry["topic_key"]: entry for entry in retained}
+    assert retained_by_key["status"]["published"] is True
+    assert retained_by_key["status"]["payload_bytes"] > 0
+    assert retained_by_key["status"]["preview"].startswith("{")
+    assert retained_by_key["devices"]["published"] is True
+
+
+@pytest.mark.anyio
+async def test_mqtt_retained_status_records_duplicate_skips():
+    broker = ConnectionBroker(
+        Settings(
+            MQTT_ENABLED=True,
+            MQTT_KNOB_TOPIC_PREFIX="rotary",
+            MQTT_KNOB_DEVICE_ID="kitchen",
+            MQTT_QOS=1,
+        )
+    )
+    mqtt = FakeMqttClient()
+    broker._mqtt_client = mqtt
+
+    await broker.publish_mqtt_retained("status", {"hash": "same", "updated_at_ms": 1})
+    await broker.publish_mqtt_retained("status", {"hash": "same", "updated_at_ms": 2})
+
+    retained = broker.retained_payload_status()
+    assert retained[0]["topic"] == "rotary/kitchen/status"
+    assert retained[0]["topic_key"] == "status"
+    assert retained[0]["published"] is False
+    assert retained[0]["fingerprint"].startswith("hash:")
 
 
 @pytest.mark.anyio
@@ -265,6 +294,7 @@ async def test_mqtt_command_publishes_non_retained_result():
         "command": "next",
         "request_id": None,
         "error": None,
+        "error_envelope": None,
         "state_version": None,
         "published_state": None,
         "idempotent_replay": None,
@@ -301,6 +331,12 @@ async def test_mqtt_command_status_keeps_failed_command_context():
     assert {key: value for key, value in result.items() if key not in {"received_at", "completed_at", "latency_ms"}} == {
         "ok": False,
         "error": "spotify lagged",
+        "error_envelope": {
+            "code": "invalid_payload",
+            "type": "ValueError",
+            "message": "spotify lagged",
+            "source": "mqtt_command",
+        },
         "request_id": "knob-9",
         "command": "pause",
     }
@@ -310,6 +346,12 @@ async def test_mqtt_command_status_keeps_failed_command_context():
         "command": "pause",
         "request_id": "knob-9",
         "error": "spotify lagged",
+        "error_envelope": {
+            "code": "invalid_payload",
+            "type": "ValueError",
+            "message": "spotify lagged",
+            "source": "mqtt_command",
+        },
         "state_version": None,
         "published_state": None,
         "idempotent_replay": None,
@@ -317,6 +359,32 @@ async def test_mqtt_command_status_keeps_failed_command_context():
         "completed_at": result["completed_at"],
         "latency_ms": result["latency_ms"],
     }
+
+
+@pytest.mark.anyio
+async def test_mqtt_command_invalid_json_returns_error_envelope():
+    broker = ConnectionBroker(
+        Settings(
+            MQTT_ENABLED=True,
+            MQTT_KNOB_TOPIC_PREFIX="rotary",
+            MQTT_KNOB_DEVICE_ID="kitchen",
+        )
+    )
+    mqtt = FakeMqttClient()
+    broker._mqtt_client = mqtt
+
+    async def command_handler(_command):
+        raise AssertionError("handler should not be called")
+
+    broker.set_mqtt_command_handler(command_handler)
+
+    await broker._handle_mqtt_message("rotary/kitchen/command", "{")
+
+    result = json.loads(mqtt.published[0][1])
+    assert result["ok"] is False
+    assert result["error_envelope"]["code"] == "invalid_payload"
+    assert result["error_envelope"]["type"] == "JSONDecodeError"
+    assert result["error_envelope"]["source"] == "mqtt_command"
 
 
 @pytest.mark.anyio
