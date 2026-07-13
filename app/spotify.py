@@ -239,6 +239,8 @@ class SpotifyClient:
         if payload is None:
             return None
         state = normalize_playback(payload)
+        if state.item_id:
+            state.item_saved = await self.track_is_saved(state.item_id)
         if self._settings.spotify_preload_next_enabled:
             state.next_track = await self.next_queue_track()
         return state
@@ -313,6 +315,15 @@ class SpotifyClient:
 
     async def remove_saved_track(self, track_id: str) -> None:
         await self.request("DELETE", "/me/tracks", params={"ids": track_id}, expected_statuses={200, 204})
+
+    async def track_is_saved(self, track_id: str) -> bool | None:
+        try:
+            payload = await self.request("GET", "/me/tracks/contains", params={"ids": track_id})
+        except httpx.HTTPStatusError:
+            return None
+        if isinstance(payload, list) and payload:
+            return bool(payload[0])
+        return None
 
     async def devices(self) -> Any:
         return await self.request("GET", "/me/player/devices")

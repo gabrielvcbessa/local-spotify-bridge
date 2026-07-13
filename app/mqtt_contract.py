@@ -112,6 +112,7 @@ def mqtt_control_state_payload(version: int, state: PlaybackSnapshot | None) -> 
         "playing": bool(state.is_playing) if state else False,
         "track_id": state.item_id if state else None,
         "track_uri": state.item_uri if state else None,
+        "track_saved": state.item_saved if state else None,
         "title": state.title if state else None,
         "artist_text": ", ".join(state.artists) if state and state.artists else None,
         "progress_ms": state.progress_ms if state else None,

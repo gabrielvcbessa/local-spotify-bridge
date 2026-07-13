@@ -106,6 +106,8 @@ async def test_current_playback_preloads_first_queue_track():
                     "item": {"id": "track1", "name": "Current", "type": "track"},
                 },
             )
+        if str(request.url).endswith("/v1/me/tracks/contains?ids=track1"):
+            return httpx.Response(200, json=[True])
         if str(request.url).endswith("/v1/me/player/queue"):
             return httpx.Response(
                 200,
@@ -140,6 +142,7 @@ async def test_current_playback_preloads_first_queue_track():
     state = await client.current_playback()
 
     assert state is not None
+    assert state.item_saved is True
     assert state.next_track is not None
     assert state.next_track["title"] == "Next Tune"
     await client.close()

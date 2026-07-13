@@ -54,6 +54,7 @@ def test_mqtt_control_state_payload_is_small_fast_state():
             is_playing=True,
             item_id="track-1",
             item_uri="spotify:track:track-1",
+            item_saved=True,
             title="Song",
             artists=["Artist"],
             progress_ms=123,
@@ -70,6 +71,7 @@ def test_mqtt_control_state_payload_is_small_fast_state():
     assert payload["version"] == 9
     assert payload["playing"] is True
     assert payload["track_id"] == "track-1"
+    assert payload["track_saved"] is True
     assert payload["artist_text"] == "Artist"
     assert payload["device"]["id"] == "device-1"
     assert payload["device"]["volume_control_supported"] is True

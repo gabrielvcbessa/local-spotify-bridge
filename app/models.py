@@ -10,6 +10,7 @@ class PlaybackSnapshot(BaseModel):
     item_id: str | None = None
     item_uri: str | None = None
     item_type: str | None = None
+    item_saved: bool | None = None
     title: str | None = None
     artists: list[str] = Field(default_factory=list)
     album: str | None = None
