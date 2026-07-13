@@ -1,7 +1,7 @@
 import pytest
 
 import app.main as main
-from app.models import PlaybackSnapshot
+from app.models import PlaybackCommand, PlaybackSnapshot, TargetDeviceCommand, TransferPlaybackCommand
 
 
 class FakeSpotifyClient:
@@ -320,4 +320,71 @@ async def test_mqtt_play_pause_does_not_use_implicit_target_device(monkeypatch):
         main.settings.command_followup_refresh_delays_for("play_pause"),
         main.settings.command_followup_refresh_delays_for("play_pause"),
         main.settings.command_followup_refresh_delays_for("pause"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_rest_controls_use_command_specific_follow_up_profiles(monkeypatch):
+    client = FakeCommandSpotifyClient()
+    refreshes = []
+
+    async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
+        refreshes.append(tuple(follow_up_delays))
+
+    async def fake_command_device_id(_client, device_id):
+        return device_id
+
+    monkeypatch.setattr(main, "refresh_and_publish", fake_refresh_and_publish)
+    monkeypatch.setattr(main, "command_device_id", fake_command_device_id)
+
+    await main.play(PlaybackCommand(device_id="speaker-1"), client=client)
+    await main.pause(device_id="speaker-2", client=client)
+    await main.next_track(client=client)
+    await main.previous_track(client=client)
+
+    assert client.calls == [
+        ("play", "speaker-1"),
+        ("pause", "speaker-2"),
+        ("next", None),
+        ("previous", None),
+    ]
+    assert refreshes == [
+        main.settings.command_followup_refresh_delays_for("play"),
+        main.settings.command_followup_refresh_delays_for("pause"),
+        main.settings.command_followup_refresh_delays_for("next"),
+        main.settings.command_followup_refresh_delays_for("previous"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_rest_transfer_paths_use_transfer_follow_up_profile(monkeypatch):
+    client = FakeCommandSpotifyClient()
+    refreshes = []
+    targets = []
+
+    async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
+        refreshes.append(tuple(follow_up_delays))
+
+    async def fake_resolve_target_device_id(*_args, **_kwargs):
+        return "speaker-1"
+
+    monkeypatch.setattr(main, "refresh_and_publish", fake_refresh_and_publish)
+    monkeypatch.setattr(client, "spotify_configured", True, raising=False)
+    monkeypatch.setattr(client, "resolve_target_device_id", fake_resolve_target_device_id, raising=False)
+    monkeypatch.setattr(main.store, "set_target_device", lambda target: targets.append(target))
+
+    await main.set_target(
+        TargetDeviceCommand(device_id="speaker-1", transfer_playback=True),
+        client=client,
+        state_store=main.store,
+    )
+    await main.transfer_playback(TransferPlaybackCommand(device_id="speaker-2"), client=client)
+
+    assert client.calls == [
+        ("transfer", "speaker-1"),
+        ("transfer", "speaker-2"),
+    ]
+    assert refreshes == [
+        main.settings.command_followup_refresh_delays_for("transfer"),
+        main.settings.command_followup_refresh_delays_for("transfer"),
     ]
