@@ -2,7 +2,7 @@ import asyncio
 import hashlib
 import json
 import time
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -75,6 +75,8 @@ class ConnectionBroker:
         self.last_mqtt_command_result: dict[str, Any] | None = None
         self.last_mqtt_command_result_at: str | None = None
         self._mqtt_command_results_by_request_id: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self._mqtt_request_results_by_request_id: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self._mqtt_rpc_history: deque[dict[str, Any]] = deque(maxlen=64)
         self._mqtt_payload_fingerprints: dict[str, str] = {}
         self._forward_transition_expected_until = 0.0
         self._lock = asyncio.Lock()
@@ -165,25 +167,55 @@ class ConnectionBroker:
             "latency_ms": response.get("latency_ms"),
         }
 
-    def cached_mqtt_command_result(self, request_id: Any) -> dict[str, Any] | None:
+    def mark_mqtt_rpc_history(self, *, label: str, payload: dict[str, Any] | None, response: dict[str, Any]) -> None:
+        self._mqtt_rpc_history.appendleft(
+            {
+                "label": label,
+                "type": payload.get("type") if isinstance(payload, dict) else response.get(label),
+                "request_id": response.get("request_id") if response.get("request_id") is not None else (payload or {}).get("request_id"),
+                "ok": response.get("ok"),
+                "error": response.get("error"),
+                "state_version": response.get("state_version"),
+                "published_state": response.get("published_state"),
+                "published_topic": response.get("published_topic"),
+                "published_version": response.get("published_version"),
+                "idempotent_replay": response.get("idempotent_replay"),
+                "received_at": response.get("received_at"),
+                "completed_at": response.get("completed_at"),
+                "latency_ms": response.get("latency_ms"),
+            }
+        )
+
+    def _mqtt_rpc_cache(self, label: str) -> OrderedDict[str, dict[str, Any]]:
+        return self._mqtt_request_results_by_request_id if label == "request" else self._mqtt_command_results_by_request_id
+
+    def cached_mqtt_rpc_result(self, label: str, request_id: Any) -> dict[str, Any] | None:
         if not isinstance(request_id, str) or not request_id:
             return None
-        cached = self._mqtt_command_results_by_request_id.get(request_id)
+        cache = self._mqtt_rpc_cache(label)
+        cached = cache.get(request_id)
         if cached is None:
             return None
-        self._mqtt_command_results_by_request_id.move_to_end(request_id)
+        cache.move_to_end(request_id)
         replay = dict(cached)
         replay["idempotent_replay"] = True
         return replay
 
-    def remember_mqtt_command_result(self, response: dict[str, Any]) -> None:
+    def remember_mqtt_rpc_result(self, label: str, response: dict[str, Any]) -> None:
         request_id = response.get("request_id")
         if not isinstance(request_id, str) or not request_id:
             return
-        self._mqtt_command_results_by_request_id[request_id] = dict(response)
-        self._mqtt_command_results_by_request_id.move_to_end(request_id)
-        while len(self._mqtt_command_results_by_request_id) > 128:
-            self._mqtt_command_results_by_request_id.popitem(last=False)
+        cache = self._mqtt_rpc_cache(label)
+        cache[request_id] = dict(response)
+        cache.move_to_end(request_id)
+        while len(cache) > 128:
+            cache.popitem(last=False)
+
+    def cached_mqtt_command_result(self, request_id: Any) -> dict[str, Any] | None:
+        return self.cached_mqtt_rpc_result("command", request_id)
+
+    def remember_mqtt_command_result(self, response: dict[str, Any]) -> None:
+        self.remember_mqtt_rpc_result("command", response)
 
     def mqtt_availability_is_active(self, *, ttl_seconds: float) -> bool:
         if self.last_mqtt_activity_at is None:
@@ -220,6 +252,8 @@ class ConnectionBroker:
             "last_result_at": self.last_mqtt_command_result_at,
             "last_result": self.last_mqtt_command_result,
             "cached_result_count": len(self._mqtt_command_results_by_request_id),
+            "cached_request_result_count": len(self._mqtt_request_results_by_request_id),
+            "recent": list(self._mqtt_rpc_history)[:20],
         }
 
     async def add_websocket(self, websocket: WebSocket) -> None:
@@ -398,12 +432,14 @@ class ConnectionBroker:
                 raise ValueError(f"MQTT {label} payload must be a JSON object.")
             if label == "command":
                 self.mark_mqtt_command_received(message)
-                cached = self.cached_mqtt_command_result(message.get("request_id"))
-                if cached is not None:
-                    response = cached
-                    await self._publish_mqtt_rpc_response(result_topic, response)
+            cached = self.cached_mqtt_rpc_result(label, message.get("request_id"))
+            if cached is not None:
+                response = cached
+                await self._publish_mqtt_rpc_response(result_topic, response)
+                if label == "command":
                     self.mark_mqtt_command_result(response)
-                    return
+                self.mark_mqtt_rpc_history(label=label, payload=message, response=response)
+                return
             result = await handler(message)
             response = {
                 "ok": True,
@@ -420,13 +456,14 @@ class ConnectionBroker:
                 response["request_id"] = message.get("request_id")
                 response[label] = message.get("type")
 
+        completed_at = datetime.now(UTC)
+        response["received_at"] = received_at.isoformat()
+        response["completed_at"] = completed_at.isoformat()
+        response["latency_ms"] = round((completed_at - received_at).total_seconds() * 1000, 3)
+        self.remember_mqtt_rpc_result(label, response)
         if label == "command":
-            completed_at = datetime.now(UTC)
-            response["received_at"] = received_at.isoformat()
-            response["completed_at"] = completed_at.isoformat()
-            response["latency_ms"] = round((completed_at - received_at).total_seconds() * 1000, 3)
-            self.remember_mqtt_command_result(response)
             self.mark_mqtt_command_result(response)
+        self.mark_mqtt_rpc_history(label=label, payload=message, response=response)
 
         await self._publish_mqtt_rpc_response(result_topic, response)
 

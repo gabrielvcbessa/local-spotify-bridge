@@ -14,6 +14,7 @@ from .context_cache import PlaylistNameCache, playback_context_parts, schedule_p
 from .knob import knob_snapshot
 from .knob_mqtt import devices_payload, envelope, library_item_payload, library_page_payload, library_root_payload, status_payload
 from .models import PlaybackCommand, PlaybackSnapshot, SeekCommand, TargetDeviceCommand, TransferPlaybackCommand, VolumeCommand
+from .mqtt_commands import mqtt_command_policy, play_library_item_body, playback_body_from_mqtt, playlist_id_from_uri
 from .mqtt_contract import mqtt_control_state_payload, mqtt_knob_config_payload
 from .spotify import (
     SpotifyAuthNotConfigured,
@@ -436,6 +437,25 @@ def debug_dashboard_html() -> str:
       </div>
     </section>
 
+    <section class="panel" style="margin-top: 16px;">
+      <h2>MQTT Command / Request History</h2>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Kind</th>
+              <th>Type</th>
+              <th>Request ID</th>
+              <th>Status</th>
+              <th>Latency</th>
+              <th>Result</th>
+            </tr>
+          </thead>
+          <tbody id="mqttHistoryRows"></tbody>
+        </table>
+      </div>
+    </section>
+
     <section class="panel">
       <div class="toolbar" id="periods"></div>
       <div class="grid">
@@ -583,6 +603,34 @@ def debug_dashboard_html() -> str:
       const error = lastResult.error ? ", " + lastResult.error : "";
       document.getElementById("lastCommandDetail").textContent =
         (lastCommand.request_id || "no request id") + " - " + resultText + latency + replay + error;
+      const historyRows = document.getElementById("mqttHistoryRows");
+      historyRows.replaceChildren();
+      const recentRpc = commandStatus.recent || [];
+      if (!recentRpc.length) {
+        const tr = document.createElement("tr");
+        const td = cell("No MQTT commands or requests yet");
+        td.colSpan = 6;
+        tr.appendChild(td);
+        historyRows.appendChild(tr);
+      } else {
+        for (const item of recentRpc) {
+          const tr = document.createElement("tr");
+          const status = item.ok === true ? "ok" : (item.ok === false ? "failed" : "pending");
+          const resultBits = [];
+          if (item.idempotent_replay) resultBits.push("replay");
+          if (item.error) resultBits.push(item.error);
+          if (item.state_version != null) resultBits.push("state " + item.state_version);
+          if (item.published_topic) resultBits.push(item.published_topic);
+          if (item.published_version != null) resultBits.push("v" + item.published_version);
+          tr.appendChild(cell(item.label || "-"));
+          tr.appendChild(cell(item.type || "-"));
+          tr.appendChild(codeCell(item.request_id || "-"));
+          tr.appendChild(cell(status, item.ok === false ? "error" : (item.idempotent_replay ? "warn" : "ok")));
+          tr.appendChild(cell(item.latency_ms == null ? "-" : Math.round(item.latency_ms) + "ms"));
+          tr.appendChild(cell(resultBits.join(", ") || "-"));
+          historyRows.appendChild(tr);
+        }
+      }
 
       const periods = document.getElementById("periods");
       periods.replaceChildren();
@@ -1741,29 +1789,23 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
     command_type = command.get("type")
     if not isinstance(command_type, str):
         raise ValueError("MQTT command requires a string 'type'.")
-    follow_up_refresh = False
+    command_policy = mqtt_command_policy(command_type)
 
     if command_type == "play_pause":
         if broker.current_state and broker.current_state.is_playing:
             await spotify.pause(device_id=explicit_device_id(command.get("device_id")))
-            follow_up_refresh = True
         else:
             await spotify.play(device_id=explicit_device_id(command.get("device_id")))
-            follow_up_refresh = True
     elif command_type == "play":
         body = playback_body_from_mqtt(command)
         await spotify.play(body=body, device_id=await command_device_id(spotify, command.get("device_id")))
-        follow_up_refresh = True
     elif command_type == "pause":
         await spotify.pause(device_id=explicit_device_id(command.get("device_id")))
-        follow_up_refresh = True
     elif command_type == "next":
         await spotify.next_track(device_id=explicit_device_id(command.get("device_id")))
         broker.mark_forward_transition_expected()
-        follow_up_refresh = True
     elif command_type == "previous":
         await spotify.previous_track(device_id=explicit_device_id(command.get("device_id")))
-        follow_up_refresh = True
     elif command_type == "volume_set":
         volume_percent = command.get("volume_percent")
         if not isinstance(volume_percent, int):
@@ -1786,7 +1828,6 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
             body={"context_uri": context_uri},
             device_id=await command_device_id(spotify, command.get("device_id")),
         )
-        follow_up_refresh = True
     elif command_type == "transfer":
         device_id = command.get("device_id")
         if not isinstance(device_id, str) or not device_id:
@@ -1796,7 +1837,6 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
         if command.get("set_target"):
             store.set_target_device(TargetDevice(device_id=device_id))
         await refresh_devices_and_publish(spotify)
-        follow_up_refresh = True
     elif command_type == "shuffle_set":
         enabled = command.get("enabled")
         if not isinstance(enabled, bool):
@@ -1810,67 +1850,19 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
     elif command_type == "play_library_item":
         body = play_library_item_body(command)
         await spotify.play(body=body, device_id=await command_device_id(spotify, command.get("device_id")))
-        follow_up_refresh = True
     else:
         raise ValueError(f"Unsupported MQTT command type: {command_type}")
 
     await refresh_and_publish(
         spotify,
-        follow_up_delays=settings.command_followup_refresh_delays_for(command_type) if follow_up_refresh else (),
+        follow_up_delays=settings.command_followup_refresh_delays_for(command_type) if command_policy.follow_up_refresh else (),
     )
     await publish_mqtt_status()
-    return {"state_version": broker.version, "published_state": True}
-
-
-def playback_body_from_mqtt(command: dict[str, Any]) -> dict[str, Any]:
-    body: dict[str, Any] = {}
-    for source, target in (
-        ("context_uri", "context_uri"),
-        ("uri", "context_uri"),
-        ("uris", "uris"),
-        ("offset", "offset"),
-        ("position_ms", "position_ms"),
-    ):
-        if command.get(source) is not None:
-            body[target] = command[source]
-    return body
-
-
-def play_library_item_body(command: dict[str, Any]) -> dict[str, Any]:
-    context_uri = command.get("context_uri")
-    item_uri = command.get("item_uri")
-    source_kind = command.get("source_kind")
-    if isinstance(context_uri, str) and context_uri:
-        offset = command.get("offset")
-        body: dict[str, Any] = {"context_uri": context_uri}
-        if isinstance(offset, dict):
-            body["offset"] = offset
-        elif isinstance(item_uri, str) and item_uri:
-            body["offset"] = {"uri": item_uri}
-        if isinstance(command.get("position_ms"), int):
-            body["position_ms"] = command["position_ms"]
-        return body
-
-    if source_kind == "saved_tracks":
-        uris = command.get("uris")
-        if isinstance(uris, list) and all(isinstance(uri, str) for uri in uris):
-            body = {"uris": uris}
-            if isinstance(item_uri, str) and item_uri in uris:
-                body["offset"] = {"position": uris.index(item_uri)}
-            return body
-        if isinstance(item_uri, str) and item_uri:
-            return {"uris": [item_uri]}
-
-    raise ValueError("play_library_item requires context_uri or saved_tracks item_uri.")
-
-
-def playlist_id_from_uri(uri: str | None) -> str | None:
-    if not uri:
-        return None
-    parts = uri.split(":")
-    if len(parts) != 3 or parts[0] != "spotify" or parts[1] != "playlist" or not parts[2]:
-        return None
-    return parts[2]
+    return {
+        "state_version": broker.version,
+        "published_state": True,
+        "playback_affecting": command_policy.playback_affecting,
+    }
 
 
 async def resolved_context_name(

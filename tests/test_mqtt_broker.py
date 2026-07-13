@@ -377,13 +377,54 @@ async def test_mqtt_request_publishes_request_result():
 
     assert mqtt.published[0][0] == "rotary/kitchen/request_result"
     assert mqtt.published[0][2:] == (1, False)
-    assert json.loads(mqtt.published[0][1]) == {
+    result = json.loads(mqtt.published[0][1])
+    assert {key: value for key, value in result.items() if key not in {"received_at", "completed_at", "latency_ms"}} == {
         "ok": True,
         "request_id": "knob-1",
         "request": "library_root",
         "published_topic": "rotary/kitchen/library/root",
         "seen": "library_root",
     }
+    assert result["received_at"] is not None
+    assert result["completed_at"] is not None
+    assert result["latency_ms"] >= 0
+    status = broker.mqtt_command_status()
+    assert status["cached_request_result_count"] == 1
+    assert status["recent"][0]["label"] == "request"
+    assert status["recent"][0]["request_id"] == "knob-1"
+
+
+@pytest.mark.anyio
+async def test_mqtt_request_replays_duplicate_request_id_without_rehandling():
+    broker = ConnectionBroker(
+        Settings(
+            MQTT_ENABLED=True,
+            MQTT_KNOB_TOPIC_PREFIX="rotary",
+            MQTT_KNOB_DEVICE_ID="kitchen",
+        )
+    )
+    mqtt = FakeMqttClient()
+    broker._mqtt_client = mqtt
+    handled = 0
+
+    async def request_handler(request):
+        nonlocal handled
+        handled += 1
+        return {"handled": handled, "seen": request["type"]}
+
+    broker.set_mqtt_request_handler(request_handler)
+
+    await broker._handle_mqtt_message("rotary/kitchen/request", '{"request_id":"knob-r1","type":"devices"}')
+    await broker._handle_mqtt_message("rotary/kitchen/request", '{"request_id":"knob-r1","type":"devices"}')
+
+    first = json.loads(mqtt.published[0][1])
+    second = json.loads(mqtt.published[1][1])
+    assert handled == 1
+    assert first["handled"] == 1
+    assert first.get("idempotent_replay") is None
+    assert second["handled"] == 1
+    assert second["idempotent_replay"] is True
+    assert broker.mqtt_command_status()["cached_request_result_count"] == 1
 
 
 @pytest.mark.anyio

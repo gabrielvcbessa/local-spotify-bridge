@@ -170,6 +170,8 @@ def test_health_exposes_recent_mqtt_command_status(monkeypatch):
     }
     assert commands["last_result_at"] is not None
     assert commands["cached_result_count"] >= 0
+    assert "cached_request_result_count" in commands
+    assert "recent" in commands
 
 
 def test_debug_dashboard_serves_html():
@@ -180,6 +182,8 @@ def test_debug_dashboard_serves_html():
     assert "/v1/debug/status" in response.text
     assert "/v1/debug/events" in response.text
     assert "Last MQTT Command" in response.text
+    assert "MQTT Command / Request History" in response.text
+    assert "mqttHistoryRows" in response.text
     assert "lastCommandDetail" in response.text
     assert "payload-toggle" in response.text
     assert "payload-row" in response.text
