@@ -206,6 +206,7 @@ async def health() -> dict[str, Any]:
         "active_device_name": broker.current_state.device_name if broker.current_state else None,
         "target_device_name": target.device_name if target else None,
         "target_device_id": target.device_id if target else None,
+        "target_readiness": cached_target_readiness(target),
         "playlist_name_cache": playlist_name_cache.status(),
         "art_cache": art_cache.status(),
         "consumers": consumers,
@@ -1569,6 +1570,7 @@ def mqtt_status_payload(command_type: str | None = None, command_request_id: str
         target=store.get_target_device(),
         mqtt_connected=settings.mqtt_enabled,
         command_pulse=command_pulse,
+        target_readiness=cached_target_readiness(store.get_target_device()),
     )
 
 
@@ -1633,23 +1635,32 @@ def target_device_from_list(devices: list[dict[str, Any]], target: TargetDevice)
     return None
 
 
-async def target_device_readiness(
-    client: SpotifyClient,
+def target_device_readiness_from_devices(
     target: TargetDevice | None,
+    devices: list[dict[str, Any]] | None,
     *,
-    refresh: bool,
+    checked_at: str,
 ) -> dict[str, Any]:
-    checked_at = datetime.now(UTC).isoformat()
     if target is None:
         return {
             "checked_at": checked_at,
+            "source": "cached_devices" if devices is not None else "unavailable",
             "target": None,
             "resolved_device_id": None,
             "safe_for_live_control": False,
             "risks": ["target_not_configured"],
         }
+    if devices is None:
+        return {
+            "checked_at": checked_at,
+            "source": "unavailable",
+            "target": target.model_dump(mode="json"),
+            "resolved_device_id": None,
+            "safe_for_live_control": False,
+            "risks": ["devices_not_cached"],
+            "device": None,
+        }
 
-    devices = await current_devices(client, refresh=refresh)
     device = target_device_from_list(devices, target)
     risks: list[str] = []
     if device is None:
@@ -1667,6 +1678,7 @@ async def target_device_readiness(
     safe_for_live_control = bool(device_id) and "restricted_device" not in risks
     return {
         "checked_at": checked_at,
+        "source": "cached_devices",
         "target": target.model_dump(mode="json"),
         "resolved_device_id": device_id if isinstance(device_id, str) else None,
         "safe_for_live_control": safe_for_live_control,
@@ -1683,6 +1695,25 @@ async def target_device_readiness(
         if isinstance(device, dict)
         else None,
     }
+
+
+def cached_target_readiness(target: TargetDevice | None) -> dict[str, Any]:
+    return target_device_readiness_from_devices(
+        target,
+        cached_devices,
+        checked_at=datetime.now(UTC).isoformat(),
+    )
+
+
+async def target_device_readiness(
+    client: SpotifyClient,
+    target: TargetDevice | None,
+    *,
+    refresh: bool,
+) -> dict[str, Any]:
+    checked_at = datetime.now(UTC).isoformat()
+    devices = await current_devices(client, refresh=refresh)
+    return target_device_readiness_from_devices(target, devices, checked_at=checked_at)
 
 
 async def build_library_root_payload(client: SpotifyClient) -> dict[str, Any]:

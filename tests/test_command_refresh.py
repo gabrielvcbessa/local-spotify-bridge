@@ -453,6 +453,35 @@ async def test_target_device_readiness_reports_risks():
     assert "target_not_found" in missing["risks"]
 
 
+def test_cached_target_readiness_reports_unavailable_without_device_cache(monkeypatch):
+    previous_cached = main.cached_devices
+    main.cached_devices = None
+    try:
+        readiness = main.cached_target_readiness(main.TargetDevice(device_id="speaker-1"))
+    finally:
+        main.cached_devices = previous_cached
+
+    assert readiness["source"] == "unavailable"
+    assert readiness["safe_for_live_control"] is False
+    assert readiness["risks"] == ["devices_not_cached"]
+
+
+def test_mqtt_status_payload_uses_cached_target_readiness(monkeypatch):
+    previous_cached = main.cached_devices
+    previous_target = main.store.get_target_device()
+    main.cached_devices = [{"id": "speaker-1", "name": "Speaker 1", "is_active": True, "supports_volume": True}]
+    monkeypatch.setattr(main.store, "get_target_device", lambda: main.TargetDevice(device_id="speaker-1"))
+    try:
+        payload = main.mqtt_status_payload()
+    finally:
+        main.cached_devices = previous_cached
+        monkeypatch.setattr(main.store, "get_target_device", lambda: previous_target)
+
+    assert payload["target_readiness"]["safe_for_live_control"] is True
+    assert payload["target_readiness"]["resolved_device_id"] == "speaker-1"
+    assert payload["target_readiness"]["risks"] == []
+
+
 @pytest.mark.asyncio
 async def test_rest_transfer_refuses_unsafe_target(monkeypatch):
     client = FakeCommandSpotifyClient()

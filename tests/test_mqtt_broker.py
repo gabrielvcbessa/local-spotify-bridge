@@ -295,6 +295,27 @@ def test_mqtt_status_payload_exposes_m5_status_fields_and_command_pulses():
     assert mqtt_payload_fingerprint(ready) != mqtt_payload_fingerprint(next_pulse)
 
 
+def test_mqtt_status_payload_includes_target_readiness():
+    readiness = {
+        "safe_for_live_control": False,
+        "risks": ["target_not_found"],
+        "resolved_device_id": None,
+    }
+    payload = status_payload(
+        version=1,
+        spotify_configured=True,
+        last_poll_at="2026-07-06T10:00:00+00:00",
+        last_error=None,
+        current_state=None,
+        target=None,
+        mqtt_connected=True,
+        target_readiness=readiness,
+    )
+
+    assert payload["target_readiness"] == readiness
+    assert mqtt_payload_fingerprint(payload).startswith("hash:")
+
+
 @pytest.mark.anyio
 async def test_mqtt_command_publishes_non_retained_result():
     broker = ConnectionBroker(

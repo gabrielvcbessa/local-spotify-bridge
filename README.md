@@ -598,8 +598,10 @@ updates do not force a publish by themselves. Non-retained `command_result` and 
 messages still publish for each command/request.
 
 The retained `status` payload includes `status` (`ready` or `degraded`) and `message` fields that
-small clients can show directly. Successful REST control and target-device changes also stamp a
-`last_command` pulse into `status`, forcing a retained status update even if Spotify's playback
+small clients can show directly. It also includes cached `target_readiness` when the bridge has a
+recent devices list, so clients can distinguish unresolved, restricted, inactive, and no-volume
+targets without making another request. Successful REST control and target-device changes also stamp
+a `last_command` pulse into `status`, forcing a retained status update even if Spotify's playback
 state has not settled into a new snapshot yet. MQTT commands include the original `request_id` in
 that pulse when one was supplied, so clients can use retained status as a backup acknowledgement if
 they miss the non-retained `command_result`.

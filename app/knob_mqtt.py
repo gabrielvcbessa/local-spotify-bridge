@@ -129,6 +129,7 @@ def status_payload(
     target: TargetDevice | None,
     mqtt_connected: bool,
     command_pulse: dict[str, Any] | None = None,
+    target_readiness: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     target_device_id = target.device_id if target else None
     target_device_name = target.device_name if target else None
@@ -149,6 +150,8 @@ def status_payload(
             "resolved": bool(target_device_id and active_device_id == target_device_id),
         },
     }
+    if target_readiness is not None:
+        payload["target_readiness"] = target_readiness
     if command_pulse is not None:
         payload["last_command"] = command_pulse
     hash_payload = {key: value for key, value in payload.items() if key != "last_poll_at"}

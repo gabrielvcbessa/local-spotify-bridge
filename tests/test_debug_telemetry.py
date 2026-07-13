@@ -127,6 +127,22 @@ def test_health_exposes_consumer_detection_and_current_polling_thresholds():
     assert "reason" in payload["consumer_idle_explanation"]
 
 
+def test_health_exposes_cached_target_readiness(monkeypatch):
+    previous_cached = main.cached_devices
+    main.cached_devices = [{"id": "speaker-1", "name": "Speaker 1", "is_active": False, "supports_volume": False}]
+    monkeypatch.setattr(main.store, "get_target_device", lambda: main.TargetDevice(device_id="speaker-1"))
+    try:
+        response = TestClient(app).get("/health")
+    finally:
+        main.cached_devices = previous_cached
+
+    assert response.status_code == 200
+    readiness = response.json()["target_readiness"]
+    assert readiness["resolved_device_id"] == "speaker-1"
+    assert readiness["safe_for_live_control"] is True
+    assert readiness["risks"] == ["inactive_device", "volume_unavailable"]
+
+
 def test_health_exposes_recent_mqtt_command_status(monkeypatch):
     previous_enabled = main.settings.mqtt_enabled
     previous_command = main.broker.last_mqtt_command
