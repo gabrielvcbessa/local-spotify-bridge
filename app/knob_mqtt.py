@@ -159,10 +159,23 @@ def status_payload(
     else:
         status = "ready"
         message = "Ready"
+    target_ready = bool(target_safe and not target_risks and target_device_id)
+    runtime_state = {
+        "backend": "local_spotify_bridge",
+        "transport": "spotify_web_api",
+        "configured": spotify_configured,
+        "reachable": spotify_configured and last_error is None,
+        "authenticated": spotify_configured and status != "auth_expired",
+        "target_ready": target_ready,
+        "command_pending": False,
+        "degraded": status != "ready",
+        "state": status,
+    }
     payload = {
         "status": status,
         "message": message,
         "ok": status == "ready",
+        "runtime": runtime_state,
         "spotify_configured": spotify_configured,
         "spotify_reachable": spotify_configured and last_error is None,
         "mqtt_connected": mqtt_connected,

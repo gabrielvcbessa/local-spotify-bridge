@@ -39,6 +39,44 @@ MQTT_KNOB_COMMANDS = [
 
 MQTT_KNOB_REQUESTS = ["library_root", "library_page", "library_playlists", "devices", "refresh"]
 
+MQTT_KNOB_BACKEND_CAPABILITIES: dict[str, Any] = {
+    "backend": "local_spotify_bridge",
+    "transport": "spotify_web_api",
+    "runtime_states": [
+        "configured",
+        "connecting",
+        "authenticated",
+        "target_ready",
+        "command_pending",
+        "degraded",
+    ],
+    "playback": {
+        "read_state": True,
+        "play_pause": True,
+        "next_previous": True,
+        "seek": True,
+        "shuffle_repeat": True,
+        "volume": True,
+    },
+    "library": {
+        "playlists": True,
+        "playlist_tracks": True,
+        "saved_tracks": True,
+        "recent_tracks": True,
+    },
+    "devices": {
+        "list": True,
+        "transfer": True,
+        "readiness": True,
+        "volume_control": True,
+    },
+    "art": {
+        "current": True,
+        "adjacent": True,
+        "rgb565": True,
+    },
+}
+
 
 def mqtt_protocol_payload() -> dict[str, Any]:
     return {
@@ -98,6 +136,7 @@ def mqtt_knob_config_payload(
         },
         "commands": MQTT_KNOB_COMMANDS,
         "requests": MQTT_KNOB_REQUESTS,
+        "capabilities": MQTT_KNOB_BACKEND_CAPABILITIES,
         "limits": {
             "knob_visible_rows": 3,
             "library_page_limit": 3,

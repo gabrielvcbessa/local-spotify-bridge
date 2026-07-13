@@ -289,10 +289,18 @@ def test_mqtt_status_payload_exposes_m5_status_fields_and_command_pulses():
 
     assert ready["status"] == "ready"
     assert ready["message"] == "Ready"
+    assert ready["runtime"]["backend"] == "local_spotify_bridge"
+    assert ready["runtime"]["transport"] == "spotify_web_api"
+    assert ready["runtime"]["configured"] is True
+    assert ready["runtime"]["reachable"] is True
+    assert ready["runtime"]["authenticated"] is True
+    assert ready["runtime"]["command_pending"] is False
     assert ready["last_command"]["type"] == "play"
     assert ready["last_command"]["request_id"] == "knob-play-1"
     assert degraded["status"] == "backend_unreachable"
     assert degraded["message"] == "Spotify offline"
+    assert degraded["runtime"]["degraded"] is True
+    assert degraded["runtime"]["state"] == "backend_unreachable"
     assert mqtt_payload_fingerprint(ready) != mqtt_payload_fingerprint(next_pulse)
 
 
@@ -338,8 +346,11 @@ def test_mqtt_status_payload_exposes_product_setup_states():
     assert unconfigured["status"] == "spotify_not_configured"
     assert unconfigured["ok"] is False
     assert unconfigured["spotify_reachable"] is False
+    assert unconfigured["runtime"]["configured"] is False
+    assert unconfigured["runtime"]["target_ready"] is False
     assert no_playback["status"] == "no_active_playback"
     assert auth_expired["status"] == "auth_expired"
+    assert auth_expired["runtime"]["authenticated"] is False
     assert target_not_ready["status"] == "target_not_ready"
 
 

@@ -1,6 +1,7 @@
 from app.art import ArtOptions
 from app.models import PlaybackSnapshot
 from app.mqtt_contract import (
+    MQTT_KNOB_BACKEND_CAPABILITIES,
     MQTT_KNOB_FEATURES,
     MQTT_KNOB_COMMANDS,
     MQTT_KNOB_SCHEMA_VERSION,
@@ -43,6 +44,10 @@ def test_mqtt_knob_config_payload_advertises_protocol_and_topics():
     assert payload["topics"]["control_state"] == "rotary/knob/control_state"
     assert payload["retain"]["control_state"] is True
     assert payload["art"]["topics"]["current"] == "rotary/knob/art/current/rgb565"
+    assert payload["capabilities"] == MQTT_KNOB_BACKEND_CAPABILITIES
+    assert payload["capabilities"]["transport"] == "spotify_web_api"
+    assert payload["capabilities"]["devices"]["readiness"] is True
+    assert "target_ready" in payload["capabilities"]["runtime_states"]
     assert "save_current_track" in MQTT_KNOB_COMMANDS
     assert "unsave_current_track" in MQTT_KNOB_COMMANDS
 

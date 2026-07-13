@@ -574,8 +574,10 @@ read that filesystem path directly.
 The bridge computes the art byte hash from the cached RGB565 payload when possible; if image fetching
 fails, state still publishes and the HTTP art endpoint remains the source of truth for image headers.
 
-The retained `config` message advertises the active topics, HTTP base URL, art recipe, QoS, and
-supported commands/requests. It also includes a `protocol` block:
+The retained `config` message advertises the active topics, HTTP base URL, art recipe, QoS,
+supported commands/requests, and backend `capabilities`. The capabilities block is the static
+contract that tells constrained clients which backend owns playback, devices, library browsing,
+target readiness, and RGB565 art. Config also includes a `protocol` block:
 
 ```json
 {
@@ -597,14 +599,16 @@ duplicate data. Volatile fields such as `version`, `updated_at_ms`, and successf
 updates do not force a publish by themselves. Non-retained `command_result` and `request_result`
 messages still publish for each command/request.
 
-The retained `status` payload includes `status` (`ready` or `degraded`) and `message` fields that
-small clients can show directly. It also includes cached `target_readiness` when the bridge has a
-recent devices list, so clients can distinguish unresolved, restricted, inactive, and no-volume
-targets without making another request. Successful REST control and target-device changes also stamp
-a `last_command` pulse into `status`, forcing a retained status update even if Spotify's playback
-state has not settled into a new snapshot yet. MQTT commands include the original `request_id` in
-that pulse when one was supplied, so clients can use retained status as a backup acknowledgement if
-they miss the non-retained `command_result`.
+The retained `status` payload includes `status` (`ready` or a product setup/degraded state) and
+`message` fields that small clients can show directly. It also includes a dynamic `runtime` block
+with `configured`, `reachable`, `authenticated`, `target_ready`, `command_pending`, and `degraded`
+flags, plus cached `target_readiness` when the bridge has a recent devices list. That lets clients
+distinguish unresolved, restricted, inactive, and no-volume targets without making another request.
+Successful REST control and target-device changes also stamp a `last_command` pulse into `status`,
+forcing a retained status update even if Spotify's playback state has not settled into a new
+snapshot yet. MQTT commands include the original `request_id` in that pulse when one was supplied,
+so clients can use retained status as a backup acknowledgement if they miss the non-retained
+`command_result`.
 
 MQTT command examples:
 
