@@ -308,6 +308,12 @@ class SpotifyClient:
             params["device_id"] = device_id
         await self.request("PUT", "/me/player/repeat", params=params, expected_statuses={204})
 
+    async def save_track(self, track_id: str) -> None:
+        await self.request("PUT", "/me/tracks", params={"ids": track_id}, expected_statuses={200, 204})
+
+    async def remove_saved_track(self, track_id: str) -> None:
+        await self.request("DELETE", "/me/tracks", params={"ids": track_id}, expected_statuses={200, 204})
+
     async def devices(self) -> Any:
         return await self.request("GET", "/me/player/devices")
 

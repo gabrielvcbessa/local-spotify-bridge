@@ -21,6 +21,8 @@ MQTT_COMMAND_POLICIES: dict[str, MqttCommandPolicy] = {
     "transfer": MqttCommandPolicy(follow_up_refresh=True, refresh_devices=True, playback_affecting=True),
     "shuffle_set": MqttCommandPolicy(),
     "repeat_set": MqttCommandPolicy(),
+    "save_current_track": MqttCommandPolicy(),
+    "unsave_current_track": MqttCommandPolicy(),
     "play_library_item": MqttCommandPolicy(follow_up_refresh=True, playback_affecting=True),
 }
 

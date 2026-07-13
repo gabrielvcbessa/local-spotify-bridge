@@ -32,6 +32,8 @@ MQTT_KNOB_COMMANDS = [
     "transfer",
     "shuffle_set",
     "repeat_set",
+    "save_current_track",
+    "unsave_current_track",
     "play_library_item",
 ]
 

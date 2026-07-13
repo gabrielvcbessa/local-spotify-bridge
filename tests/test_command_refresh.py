@@ -36,6 +36,12 @@ class FakeCommandSpotifyClient:
     async def transfer_playback(self, device_id: str, play: bool = True) -> None:
         self.calls.append(("transfer", device_id))
 
+    async def save_track(self, track_id: str) -> None:
+        self.calls.append(("save_track", track_id))
+
+    async def remove_saved_track(self, track_id: str) -> None:
+        self.calls.append(("remove_saved_track", track_id))
+
     async def devices(self):
         return {"devices": self.device_items}
 
@@ -302,6 +308,62 @@ async def test_mqtt_transfer_refreshes_devices_and_state(monkeypatch):
     assert device_refreshes == [True]
     assert refreshes == [main.settings.command_followup_refresh_delays_for("transfer")]
     assert status_pulses == [("transfer", "knob-transfer-1")]
+
+
+@pytest.mark.asyncio
+async def test_mqtt_save_track_uses_payload_track_uri_and_publishes_status(monkeypatch):
+    client = FakeCommandSpotifyClient()
+    refreshes = []
+    status_pulses = []
+
+    async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
+        refreshes.append(tuple(follow_up_delays))
+
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None):
+        status_pulses.append((command_type, command_request_id))
+
+    monkeypatch.setattr(main, "spotify", client)
+    monkeypatch.setattr(main, "refresh_and_publish", fake_refresh_and_publish)
+    monkeypatch.setattr(main, "publish_mqtt_status", fake_publish_mqtt_status)
+
+    await main.handle_mqtt_command(
+        {
+            "request_id": "knob-like-1",
+            "type": "save_current_track",
+            "track_uri": "spotify:track:track-1",
+        }
+    )
+
+    assert client.calls == [("save_track", "track-1")]
+    assert refreshes == [()]
+    assert status_pulses == [("save_current_track", "knob-like-1")]
+
+
+@pytest.mark.asyncio
+async def test_mqtt_unsave_track_falls_back_to_current_state(monkeypatch):
+    client = FakeCommandSpotifyClient()
+    refreshes = []
+    status_pulses = []
+
+    async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
+        refreshes.append(tuple(follow_up_delays))
+
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None):
+        status_pulses.append((command_type, command_request_id))
+
+    monkeypatch.setattr(main, "spotify", client)
+    monkeypatch.setattr(main, "refresh_and_publish", fake_refresh_and_publish)
+    monkeypatch.setattr(main, "publish_mqtt_status", fake_publish_mqtt_status)
+
+    main.broker.current_state = PlaybackSnapshot(item_id="track-2")
+    try:
+        await main.handle_mqtt_command({"request_id": "knob-unlike-1", "type": "unsave_current_track"})
+    finally:
+        main.broker.current_state = None
+
+    assert client.calls == [("remove_saved_track", "track-2")]
+    assert refreshes == [()]
+    assert status_pulses == [("unsave_current_track", "knob-unlike-1")]
 
 
 @pytest.mark.asyncio

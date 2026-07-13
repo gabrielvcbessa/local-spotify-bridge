@@ -1537,6 +1537,27 @@ def mqtt_control_state(version: int, state: PlaybackSnapshot | None) -> dict[str
     return mqtt_control_state_payload(version, state)
 
 
+def track_id_from_command_or_state(command: dict[str, Any], state: PlaybackSnapshot | None) -> str:
+    track_id = command.get("track_id") or command.get("id")
+    if isinstance(track_id, str) and track_id:
+        return track_id
+
+    track_uri = command.get("track_uri") or command.get("uri")
+    if isinstance(track_uri, str) and track_uri.startswith("spotify:track:"):
+        parsed_track_id = track_uri.rsplit(":", 1)[-1]
+        if parsed_track_id:
+            return parsed_track_id
+
+    if state and state.item_id:
+        return state.item_id
+    if state and state.item_uri and state.item_uri.startswith("spotify:track:"):
+        parsed_track_id = state.item_uri.rsplit(":", 1)[-1]
+        if parsed_track_id:
+            return parsed_track_id
+
+    raise ValueError("track save command requires track_id, track_uri, or current track state.")
+
+
 def mqtt_art_options() -> ArtOptions:
     return ArtOptions(
         size=settings.mqtt_knob_art_size,
@@ -2086,6 +2107,10 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(mode, str):
             raise ValueError("repeat_set requires string mode.")
         await spotify.set_repeat(mode, await command_device_id(spotify, command.get("device_id")))
+    elif command_type == "save_current_track":
+        await spotify.save_track(track_id_from_command_or_state(command, broker.current_state))
+    elif command_type == "unsave_current_track":
+        await spotify.remove_saved_track(track_id_from_command_or_state(command, broker.current_state))
     elif command_type == "play_library_item":
         body = play_library_item_body(command)
         await spotify.play(body=body, device_id=await command_device_id(spotify, command.get("device_id")))
