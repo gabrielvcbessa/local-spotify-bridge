@@ -903,6 +903,8 @@ async def auth_login(
             "redirect_uri": settings.spotify_redirect_uri,
             "scopes": settings.spotify_scope_list,
         }
+    except HTTPException:
+        raise
     except Exception as exc:
         raise translate_spotify_error(exc) from exc
 
@@ -922,6 +924,8 @@ async def auth_callback(
         token = await client.exchange_code(code)
         if token.get("refresh_token"):
             poller.start()
+    except HTTPException:
+        raise
     except Exception as exc:
         raise translate_spotify_error(exc) from exc
 
@@ -959,14 +963,17 @@ async def get_target(
 ) -> dict[str, Any]:
     target = state_store.get_target_device()
     resolved_device_id = None
+    readiness = None
     if target and client.spotify_configured:
         try:
-            resolved_device_id = await client.resolve_target_device_id(target=target)
+            readiness = await target_device_readiness(client, target, refresh=True)
+            resolved_device_id = explicit_device_id(readiness.get("resolved_device_id"))
         except Exception as exc:
             broker.mark_spotify_error(exc)
     return {
         "target": target.model_dump(mode="json") if target else None,
         "resolved_device_id": resolved_device_id,
+        "readiness": readiness,
     }
 
 
@@ -1034,13 +1041,17 @@ async def set_target(
 
     target = TargetDevice(device_id=command.device_id, device_name=command.device_name)
     resolved_device_id = command.device_id
+    readiness: dict[str, Any] | None = None
     try:
         if client.spotify_configured:
-            resolved_device_id = await client.resolve_target_device_id(target=target)
+            readiness = await target_device_readiness(client, target, refresh=True)
+            resolved_device_id = explicit_device_id(readiness.get("resolved_device_id"))
         if command.transfer_playback and not client.spotify_configured:
             raise SpotifyNotConfigured(
                 "Spotify credentials are required to transfer playback while setting target."
             )
+        if command.transfer_playback and not (readiness or {}).get("safe_for_live_control", False):
+            raise HTTPException(status_code=409, detail={"message": "Target device is not safe for live control.", "readiness": readiness})
         if command.transfer_playback and resolved_device_id:
             await client.transfer_playback(resolved_device_id, command.play)
             await refresh_and_publish(
@@ -1055,6 +1066,7 @@ async def set_target(
     return {
         "target": target.model_dump(mode="json"),
         "resolved_device_id": resolved_device_id,
+        "readiness": readiness,
     }
 
 
@@ -1126,10 +1138,15 @@ async def transfer_playback(
     client: Annotated[SpotifyClient, Depends(spotify_client)] = spotify,
 ):
     try:
+        readiness = await target_device_readiness(client, TargetDevice(device_id=command.device_id), refresh=True)
+        if not readiness.get("safe_for_live_control", False):
+            raise HTTPException(status_code=409, detail={"message": "Target device is not safe for live control.", "readiness": readiness})
         await client.transfer_playback(command.device_id, command.play)
         store.set_target_device(TargetDevice(device_id=command.device_id))
         await refresh_and_publish(client, follow_up_delays=settings.command_followup_refresh_delays_for("transfer"))
         await publish_mqtt_status(command_type="transfer")
+    except HTTPException:
+        raise
     except Exception as exc:
         raise translate_spotify_error(exc) from exc
 
@@ -1603,6 +1620,71 @@ def active_device_id(devices: list[dict[str, Any]]) -> str | None:
     return None
 
 
+def target_device_from_list(devices: list[dict[str, Any]], target: TargetDevice) -> dict[str, Any] | None:
+    if target.device_id:
+        for device in devices:
+            if device.get("id") == target.device_id:
+                return device
+    if target.device_name:
+        target_name = target.device_name.casefold()
+        for device in devices:
+            if str(device.get("name", "")).casefold() == target_name:
+                return device
+    return None
+
+
+async def target_device_readiness(
+    client: SpotifyClient,
+    target: TargetDevice | None,
+    *,
+    refresh: bool,
+) -> dict[str, Any]:
+    checked_at = datetime.now(UTC).isoformat()
+    if target is None:
+        return {
+            "checked_at": checked_at,
+            "target": None,
+            "resolved_device_id": None,
+            "safe_for_live_control": False,
+            "risks": ["target_not_configured"],
+        }
+
+    devices = await current_devices(client, refresh=refresh)
+    device = target_device_from_list(devices, target)
+    risks: list[str] = []
+    if device is None:
+        risks.append("target_not_found")
+    device_id = device.get("id") if isinstance(device, dict) else None
+    if not device_id:
+        risks.append("missing_device_id")
+    if isinstance(device, dict) and device.get("is_restricted"):
+        risks.append("restricted_device")
+    if isinstance(device, dict) and not device.get("is_active"):
+        risks.append("inactive_device")
+    if isinstance(device, dict) and not device.get("supports_volume"):
+        risks.append("volume_unavailable")
+
+    safe_for_live_control = bool(device_id) and "restricted_device" not in risks
+    return {
+        "checked_at": checked_at,
+        "target": target.model_dump(mode="json"),
+        "resolved_device_id": device_id if isinstance(device_id, str) else None,
+        "safe_for_live_control": safe_for_live_control,
+        "risks": risks,
+        "device": {
+            "id": device.get("id"),
+            "name": device.get("name"),
+            "type": device.get("type"),
+            "is_active": bool(device.get("is_active")),
+            "is_restricted": bool(device.get("is_restricted")),
+            "volume_control_supported": bool(device.get("supports_volume")),
+            "volume_percent": device.get("volume_percent"),
+        }
+        if isinstance(device, dict)
+        else None,
+    }
+
+
 async def build_library_root_payload(client: SpotifyClient) -> dict[str, Any]:
     playlists_payload = await client.playlists(limit=1, offset=0)
     saved_payload = await client.saved_tracks(limit=1, offset=0)
@@ -1955,6 +2037,9 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
         device_id = command.get("device_id")
         if not isinstance(device_id, str) or not device_id:
             raise ValueError("transfer requires device_id.")
+        readiness = await target_device_readiness(spotify, TargetDevice(device_id=device_id), refresh=True)
+        if not readiness.get("safe_for_live_control", False):
+            raise ValueError(f"transfer target is not safe for live control: {','.join(readiness.get('risks', []))}")
         play = command.get("play", True)
         await spotify.transfer_playback(device_id, bool(play))
         if command.get("set_target"):

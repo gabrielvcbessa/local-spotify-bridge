@@ -266,6 +266,10 @@ curl -X POST http://localhost:8090/v1/target \
 
 Once a target is set, control endpoints can omit `device_id`. The bridge resolves the stored target
 against Spotify's current device list, so it can recover when Spotify changes device IDs.
+`GET /v1/target` also returns a `readiness` block with the resolved device, current risks, volume
+support, and whether the target is safe for live control. Requests that transfer playback while
+setting a target are refused before calling Spotify when the target cannot be resolved to a real
+device ID or Spotify marks it restricted.
 
 Control examples:
 

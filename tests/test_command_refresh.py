@@ -16,6 +16,10 @@ class FakeSpotifyClient:
 class FakeCommandSpotifyClient:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str | None]] = []
+        self.device_items: list[dict] = [
+            {"id": "speaker-1", "name": "Speaker 1", "is_active": True, "supports_volume": True},
+            {"id": "speaker-2", "name": "Speaker 2", "is_active": False, "supports_volume": False},
+        ]
 
     async def play(self, body=None, device_id: str | None = None) -> None:
         self.calls.append(("play", device_id))
@@ -31,6 +35,9 @@ class FakeCommandSpotifyClient:
 
     async def transfer_playback(self, device_id: str, play: bool = True) -> None:
         self.calls.append(("transfer", device_id))
+
+    async def devices(self):
+        return {"devices": self.device_items}
 
 
 class FakeDevicesClient:
@@ -411,6 +418,65 @@ async def test_rest_transfer_paths_use_transfer_follow_up_profile(monkeypatch):
         main.settings.command_followup_refresh_delays_for("transfer"),
     ]
     assert status_pulses == [("transfer", None), ("transfer", None)]
+
+
+@pytest.mark.asyncio
+async def test_target_device_readiness_reports_risks():
+    client = FakeCommandSpotifyClient()
+    client.device_items = [
+        {"id": "speaker-1", "name": "Speaker 1", "is_active": False, "supports_volume": False},
+        {"id": "restricted-1", "name": "Restricted", "is_restricted": True, "supports_volume": True},
+    ]
+
+    readiness = await main.target_device_readiness(
+        client,
+        main.TargetDevice(device_id="speaker-1"),
+        refresh=True,
+    )
+    restricted = await main.target_device_readiness(
+        client,
+        main.TargetDevice(device_id="restricted-1"),
+        refresh=True,
+    )
+    missing = await main.target_device_readiness(
+        client,
+        main.TargetDevice(device_id="missing"),
+        refresh=True,
+    )
+
+    assert readiness["safe_for_live_control"] is True
+    assert readiness["resolved_device_id"] == "speaker-1"
+    assert readiness["risks"] == ["inactive_device", "volume_unavailable"]
+    assert restricted["safe_for_live_control"] is False
+    assert "restricted_device" in restricted["risks"]
+    assert missing["safe_for_live_control"] is False
+    assert "target_not_found" in missing["risks"]
+
+
+@pytest.mark.asyncio
+async def test_rest_transfer_refuses_unsafe_target(monkeypatch):
+    client = FakeCommandSpotifyClient()
+    client.device_items = [{"id": "restricted-1", "name": "Restricted", "is_restricted": True}]
+    monkeypatch.setattr(main.store, "set_target_device", lambda _target: None)
+
+    with pytest.raises(main.HTTPException) as exc:
+        await main.transfer_playback(TransferPlaybackCommand(device_id="restricted-1"), client=client)
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["readiness"]["risks"] == ["restricted_device", "inactive_device", "volume_unavailable"]
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_mqtt_transfer_refuses_unsafe_target(monkeypatch):
+    client = FakeCommandSpotifyClient()
+    client.device_items = []
+    monkeypatch.setattr(main, "spotify", client)
+
+    with pytest.raises(ValueError, match="not safe for live control"):
+        await main.handle_mqtt_command({"type": "transfer", "device_id": "missing"})
+
+    assert client.calls == []
 
 
 @pytest.mark.asyncio
