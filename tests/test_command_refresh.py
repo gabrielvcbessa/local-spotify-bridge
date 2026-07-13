@@ -231,19 +231,20 @@ async def test_full_playlists_payload_can_sort_alphabetically(monkeypatch):
 async def test_mqtt_next_previous_do_not_use_implicit_target_device(monkeypatch):
     client = FakeCommandSpotifyClient()
     refreshes = []
+    status_pulses = []
 
     async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
         refreshes.append(tuple(follow_up_delays))
 
-    async def fake_publish_mqtt_status():
-        return None
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None):
+        status_pulses.append((command_type, command_request_id))
 
     monkeypatch.setattr(main, "spotify", client)
     monkeypatch.setattr(main, "refresh_and_publish", fake_refresh_and_publish)
     monkeypatch.setattr(main, "publish_mqtt_status", fake_publish_mqtt_status)
 
-    await main.handle_mqtt_command({"type": "next"})
-    await main.handle_mqtt_command({"type": "previous"})
+    await main.handle_mqtt_command({"request_id": "knob-next-1", "type": "next"})
+    await main.handle_mqtt_command({"request_id": "knob-prev-1", "type": "previous"})
     await main.handle_mqtt_command({"type": "next", "device_id": "speaker-1"})
 
     assert client.calls == [
@@ -256,6 +257,11 @@ async def test_mqtt_next_previous_do_not_use_implicit_target_device(monkeypatch)
         main.settings.command_followup_refresh_delays_for("previous"),
         main.settings.command_followup_refresh_delays_for("next"),
     ]
+    assert status_pulses == [
+        ("next", "knob-next-1"),
+        ("previous", "knob-prev-1"),
+        ("next", None),
+    ]
 
 
 @pytest.mark.asyncio
@@ -263,6 +269,7 @@ async def test_mqtt_transfer_refreshes_devices_and_state(monkeypatch):
     client = FakeCommandSpotifyClient()
     refreshes = []
     device_refreshes = []
+    status_pulses = []
 
     async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
         refreshes.append(tuple(follow_up_delays))
@@ -271,8 +278,8 @@ async def test_mqtt_transfer_refreshes_devices_and_state(monkeypatch):
         device_refreshes.append(True)
         return {"items": []}
 
-    async def fake_publish_mqtt_status():
-        return None
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None):
+        status_pulses.append((command_type, command_request_id))
 
     monkeypatch.setattr(main, "spotify", client)
     monkeypatch.setattr(main, "refresh_and_publish", fake_refresh_and_publish)
@@ -280,11 +287,14 @@ async def test_mqtt_transfer_refreshes_devices_and_state(monkeypatch):
     monkeypatch.setattr(main, "publish_mqtt_status", fake_publish_mqtt_status)
     monkeypatch.setattr(main.store, "set_target_device", lambda _target: None)
 
-    await main.handle_mqtt_command({"type": "transfer", "device_id": "speaker-1", "set_target": True})
+    await main.handle_mqtt_command(
+        {"request_id": "knob-transfer-1", "type": "transfer", "device_id": "speaker-1", "set_target": True}
+    )
 
     assert client.calls == [("transfer", "speaker-1")]
     assert device_refreshes == [True]
     assert refreshes == [main.settings.command_followup_refresh_delays_for("transfer")]
+    assert status_pulses == [("transfer", "knob-transfer-1")]
 
 
 @pytest.mark.asyncio
@@ -295,7 +305,8 @@ async def test_mqtt_play_pause_does_not_use_implicit_target_device(monkeypatch):
     async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
         refreshes.append(tuple(follow_up_delays))
 
-    async def fake_publish_mqtt_status():
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None):
+        _ = (command_type, command_request_id)
         return None
 
     monkeypatch.setattr(main, "spotify", client)
@@ -335,8 +346,8 @@ async def test_rest_controls_use_command_specific_follow_up_profiles(monkeypatch
     async def fake_command_device_id(_client, device_id):
         return device_id
 
-    async def fake_publish_mqtt_status(command_type=None):
-        status_pulses.append(command_type)
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None):
+        status_pulses.append((command_type, command_request_id))
 
     monkeypatch.setattr(main, "refresh_and_publish", fake_refresh_and_publish)
     monkeypatch.setattr(main, "command_device_id", fake_command_device_id)
@@ -359,7 +370,7 @@ async def test_rest_controls_use_command_specific_follow_up_profiles(monkeypatch
         main.settings.command_followup_refresh_delays_for("next"),
         main.settings.command_followup_refresh_delays_for("previous"),
     ]
-    assert status_pulses == ["play", "pause", "next", "previous"]
+    assert status_pulses == [("play", None), ("pause", None), ("next", None), ("previous", None)]
 
 
 @pytest.mark.asyncio
@@ -375,8 +386,8 @@ async def test_rest_transfer_paths_use_transfer_follow_up_profile(monkeypatch):
     async def fake_resolve_target_device_id(*_args, **_kwargs):
         return "speaker-1"
 
-    async def fake_publish_mqtt_status(command_type=None):
-        status_pulses.append(command_type)
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None):
+        status_pulses.append((command_type, command_request_id))
 
     monkeypatch.setattr(main, "refresh_and_publish", fake_refresh_and_publish)
     monkeypatch.setattr(client, "spotify_configured", True, raising=False)
@@ -399,7 +410,7 @@ async def test_rest_transfer_paths_use_transfer_follow_up_profile(monkeypatch):
         main.settings.command_followup_refresh_delays_for("transfer"),
         main.settings.command_followup_refresh_delays_for("transfer"),
     ]
-    assert status_pulses == ["transfer", "transfer"]
+    assert status_pulses == [("transfer", None), ("transfer", None)]
 
 
 @pytest.mark.asyncio
@@ -407,8 +418,8 @@ async def test_rest_target_changes_publish_status_pulse(monkeypatch):
     status_pulses = []
     targets = []
 
-    async def fake_publish_mqtt_status(command_type=None):
-        status_pulses.append(command_type)
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None):
+        status_pulses.append((command_type, command_request_id))
 
     monkeypatch.setattr(main.store, "set_target_device", lambda target: targets.append(target))
     monkeypatch.setattr(main, "publish_mqtt_status", fake_publish_mqtt_status)
@@ -420,4 +431,4 @@ async def test_rest_target_changes_publish_status_pulse(monkeypatch):
     await main.set_target(TargetDeviceCommand(), client=client, state_store=main.store)
 
     assert [target.device_id if target else None for target in targets] == ["speaker-1", None]
-    assert status_pulses == ["set_target", "clear_target"]
+    assert status_pulses == [("set_target", None), ("clear_target", None)]

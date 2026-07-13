@@ -1534,13 +1534,15 @@ def mqtt_base_url() -> str:
     return f"http://{host}:{settings.port}"
 
 
-def mqtt_status_payload(command_type: str | None = None) -> dict[str, Any]:
+def mqtt_status_payload(command_type: str | None = None, command_request_id: str | None = None) -> dict[str, Any]:
     command_pulse = None
     if command_type:
         command_pulse = {
             "type": command_type,
             "completed_at": datetime.now(UTC).isoformat(),
         }
+        if command_request_id:
+            command_pulse["request_id"] = command_request_id
     return status_payload(
         version=broker.version,
         spotify_configured=spotify.spotify_configured,
@@ -1553,8 +1555,11 @@ def mqtt_status_payload(command_type: str | None = None) -> dict[str, Any]:
     )
 
 
-async def publish_mqtt_status(command_type: str | None = None) -> None:
-    await broker.publish_mqtt_retained("status", mqtt_status_payload(command_type=command_type))
+async def publish_mqtt_status(command_type: str | None = None, command_request_id: str | None = None) -> None:
+    await broker.publish_mqtt_retained(
+        "status",
+        mqtt_status_payload(command_type=command_type, command_request_id=command_request_id),
+    )
 
 
 async def refresh_devices_and_publish(client: SpotifyClient) -> dict[str, Any]:
@@ -1904,6 +1909,9 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
     command_type = command.get("type")
     if not isinstance(command_type, str):
         raise ValueError("MQTT command requires a string 'type'.")
+    request_id = command.get("request_id")
+    if not isinstance(request_id, str):
+        request_id = None
     command_policy = mqtt_command_policy(command_type)
 
     if command_type == "play_pause":
@@ -1972,7 +1980,7 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
         spotify,
         follow_up_delays=settings.command_followup_refresh_delays_for(command_type) if command_policy.follow_up_refresh else (),
     )
-    await publish_mqtt_status()
+    await publish_mqtt_status(command_type=command_type, command_request_id=request_id)
     return {
         "state_version": broker.version,
         "published_state": True,

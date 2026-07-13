@@ -264,7 +264,7 @@ def test_mqtt_status_payload_exposes_m5_status_fields_and_command_pulses():
         current_state=None,
         target=None,
         mqtt_connected=True,
-        command_pulse={"type": "play", "completed_at": "2026-07-06T10:00:01+00:00"},
+        command_pulse={"type": "play", "request_id": "knob-play-1", "completed_at": "2026-07-06T10:00:01+00:00"},
     )
     degraded = status_payload(
         version=1,
@@ -289,6 +289,7 @@ def test_mqtt_status_payload_exposes_m5_status_fields_and_command_pulses():
     assert ready["status"] == "ready"
     assert ready["message"] == "Ready"
     assert ready["last_command"]["type"] == "play"
+    assert ready["last_command"]["request_id"] == "knob-play-1"
     assert degraded["status"] == "degraded"
     assert degraded["message"] == "Spotify offline"
     assert mqtt_payload_fingerprint(ready) != mqtt_payload_fingerprint(next_pulse)
