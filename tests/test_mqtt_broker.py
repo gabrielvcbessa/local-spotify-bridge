@@ -255,6 +255,45 @@ def test_mqtt_status_hash_ignores_successful_poll_timestamp():
     assert first["hash"] == second["hash"]
 
 
+def test_mqtt_status_payload_exposes_m5_status_fields_and_command_pulses():
+    ready = status_payload(
+        version=1,
+        spotify_configured=True,
+        last_poll_at="2026-07-06T10:00:00+00:00",
+        last_error=None,
+        current_state=None,
+        target=None,
+        mqtt_connected=True,
+        command_pulse={"type": "play", "completed_at": "2026-07-06T10:00:01+00:00"},
+    )
+    degraded = status_payload(
+        version=1,
+        spotify_configured=True,
+        last_poll_at="2026-07-06T10:00:00+00:00",
+        last_error="Spotify offline",
+        current_state=None,
+        target=None,
+        mqtt_connected=True,
+    )
+    next_pulse = status_payload(
+        version=1,
+        spotify_configured=True,
+        last_poll_at="2026-07-06T10:00:00+00:00",
+        last_error=None,
+        current_state=None,
+        target=None,
+        mqtt_connected=True,
+        command_pulse={"type": "next", "completed_at": "2026-07-06T10:00:02+00:00"},
+    )
+
+    assert ready["status"] == "ready"
+    assert ready["message"] == "Ready"
+    assert ready["last_command"]["type"] == "play"
+    assert degraded["status"] == "degraded"
+    assert degraded["message"] == "Spotify offline"
+    assert mqtt_payload_fingerprint(ready) != mqtt_payload_fingerprint(next_pulse)
+
+
 @pytest.mark.anyio
 async def test_mqtt_command_publishes_non_retained_result():
     broker = ConnectionBroker(

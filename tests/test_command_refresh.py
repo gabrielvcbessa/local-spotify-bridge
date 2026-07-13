@@ -327,6 +327,7 @@ async def test_mqtt_play_pause_does_not_use_implicit_target_device(monkeypatch):
 async def test_rest_controls_use_command_specific_follow_up_profiles(monkeypatch):
     client = FakeCommandSpotifyClient()
     refreshes = []
+    status_pulses = []
 
     async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
         refreshes.append(tuple(follow_up_delays))
@@ -334,8 +335,12 @@ async def test_rest_controls_use_command_specific_follow_up_profiles(monkeypatch
     async def fake_command_device_id(_client, device_id):
         return device_id
 
+    async def fake_publish_mqtt_status(command_type=None):
+        status_pulses.append(command_type)
+
     monkeypatch.setattr(main, "refresh_and_publish", fake_refresh_and_publish)
     monkeypatch.setattr(main, "command_device_id", fake_command_device_id)
+    monkeypatch.setattr(main, "publish_mqtt_status", fake_publish_mqtt_status)
 
     await main.play(PlaybackCommand(device_id="speaker-1"), client=client)
     await main.pause(device_id="speaker-2", client=client)
@@ -354,6 +359,7 @@ async def test_rest_controls_use_command_specific_follow_up_profiles(monkeypatch
         main.settings.command_followup_refresh_delays_for("next"),
         main.settings.command_followup_refresh_delays_for("previous"),
     ]
+    assert status_pulses == ["play", "pause", "next", "previous"]
 
 
 @pytest.mark.asyncio
@@ -361,6 +367,7 @@ async def test_rest_transfer_paths_use_transfer_follow_up_profile(monkeypatch):
     client = FakeCommandSpotifyClient()
     refreshes = []
     targets = []
+    status_pulses = []
 
     async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
         refreshes.append(tuple(follow_up_delays))
@@ -368,10 +375,14 @@ async def test_rest_transfer_paths_use_transfer_follow_up_profile(monkeypatch):
     async def fake_resolve_target_device_id(*_args, **_kwargs):
         return "speaker-1"
 
+    async def fake_publish_mqtt_status(command_type=None):
+        status_pulses.append(command_type)
+
     monkeypatch.setattr(main, "refresh_and_publish", fake_refresh_and_publish)
     monkeypatch.setattr(client, "spotify_configured", True, raising=False)
     monkeypatch.setattr(client, "resolve_target_device_id", fake_resolve_target_device_id, raising=False)
     monkeypatch.setattr(main.store, "set_target_device", lambda target: targets.append(target))
+    monkeypatch.setattr(main, "publish_mqtt_status", fake_publish_mqtt_status)
 
     await main.set_target(
         TargetDeviceCommand(device_id="speaker-1", transfer_playback=True),
@@ -388,3 +399,25 @@ async def test_rest_transfer_paths_use_transfer_follow_up_profile(monkeypatch):
         main.settings.command_followup_refresh_delays_for("transfer"),
         main.settings.command_followup_refresh_delays_for("transfer"),
     ]
+    assert status_pulses == ["transfer", "transfer"]
+
+
+@pytest.mark.asyncio
+async def test_rest_target_changes_publish_status_pulse(monkeypatch):
+    status_pulses = []
+    targets = []
+
+    async def fake_publish_mqtt_status(command_type=None):
+        status_pulses.append(command_type)
+
+    monkeypatch.setattr(main.store, "set_target_device", lambda target: targets.append(target))
+    monkeypatch.setattr(main, "publish_mqtt_status", fake_publish_mqtt_status)
+
+    client = FakeCommandSpotifyClient()
+    monkeypatch.setattr(client, "spotify_configured", False, raising=False)
+
+    await main.set_target(TargetDeviceCommand(device_id="speaker-1"), client=client, state_store=main.store)
+    await main.set_target(TargetDeviceCommand(), client=client, state_store=main.store)
+
+    assert [target.device_id if target else None for target in targets] == ["speaker-1", None]
+    assert status_pulses == ["set_target", "clear_target"]

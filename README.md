@@ -593,6 +593,11 @@ duplicate data. Volatile fields such as `version`, `updated_at_ms`, and successf
 updates do not force a publish by themselves. Non-retained `command_result` and `request_result`
 messages still publish for each command/request.
 
+The retained `status` payload includes `status` (`ready` or `degraded`) and `message` fields that
+small clients can show directly. Successful REST control and target-device changes also stamp a
+`last_command` pulse into `status`, forcing a retained status update even if Spotify's playback
+state has not settled into a new snapshot yet.
+
 MQTT command examples:
 
 ```json

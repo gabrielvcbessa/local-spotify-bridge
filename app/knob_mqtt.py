@@ -128,11 +128,15 @@ def status_payload(
     current_state: PlaybackSnapshot | None,
     target: TargetDevice | None,
     mqtt_connected: bool,
+    command_pulse: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     target_device_id = target.device_id if target else None
     target_device_name = target.device_name if target else None
     active_device_id = current_state.device_id if current_state else None
+    status = "ready" if last_error is None else "degraded"
     payload = {
+        "status": status,
+        "message": "Ready" if last_error is None else last_error,
         "ok": last_error is None,
         "spotify_configured": spotify_configured,
         "spotify_reachable": last_error is None,
@@ -145,5 +149,7 @@ def status_payload(
             "resolved": bool(target_device_id and active_device_id == target_device_id),
         },
     }
+    if command_pulse is not None:
+        payload["last_command"] = command_pulse
     hash_payload = {key: value for key, value in payload.items() if key != "last_poll_at"}
     return envelope(version=version, payload=payload, hash_payload=hash_payload)

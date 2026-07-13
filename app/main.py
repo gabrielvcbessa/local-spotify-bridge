@@ -1029,6 +1029,7 @@ async def set_target(
 ) -> dict[str, Any]:
     if not command.device_id and not command.device_name:
         state_store.set_target_device(None)
+        await publish_mqtt_status(command_type="clear_target")
         return {"target": None, "resolved_device_id": None}
 
     target = TargetDevice(device_id=command.device_id, device_name=command.device_name)
@@ -1050,6 +1051,7 @@ async def set_target(
         raise translate_spotify_error(exc) from exc
 
     state_store.set_target_device(target)
+    await publish_mqtt_status(command_type="transfer" if command.transfer_playback else "set_target")
     return {
         "target": target.model_dump(mode="json"),
         "resolved_device_id": resolved_device_id,
@@ -1073,6 +1075,7 @@ async def play(command: PlaybackCommand, client: Annotated[SpotifyClient, Depend
         device_id = await command_device_id(client, command.device_id)
         await client.play(body=body, device_id=device_id)
         await refresh_and_publish(client, follow_up_delays=settings.command_followup_refresh_delays_for("play"))
+        await publish_mqtt_status(command_type="play")
     except Exception as exc:
         raise translate_spotify_error(exc) from exc
 
@@ -1085,6 +1088,7 @@ async def pause(
     try:
         await client.pause(device_id=await command_device_id(client, device_id))
         await refresh_and_publish(client, follow_up_delays=settings.command_followup_refresh_delays_for("pause"))
+        await publish_mqtt_status(command_type="pause")
     except Exception as exc:
         raise translate_spotify_error(exc) from exc
 
@@ -1098,6 +1102,7 @@ async def next_track(
         await client.next_track(device_id=explicit_device_id(device_id))
         broker.mark_forward_transition_expected()
         await refresh_and_publish(client, follow_up_delays=settings.command_followup_refresh_delays_for("next"))
+        await publish_mqtt_status(command_type="next")
     except Exception as exc:
         raise translate_spotify_error(exc) from exc
 
@@ -1110,6 +1115,7 @@ async def previous_track(
     try:
         await client.previous_track(device_id=explicit_device_id(device_id))
         await refresh_and_publish(client, follow_up_delays=settings.command_followup_refresh_delays_for("previous"))
+        await publish_mqtt_status(command_type="previous")
     except Exception as exc:
         raise translate_spotify_error(exc) from exc
 
@@ -1123,6 +1129,7 @@ async def transfer_playback(
         await client.transfer_playback(command.device_id, command.play)
         store.set_target_device(TargetDevice(device_id=command.device_id))
         await refresh_and_publish(client, follow_up_delays=settings.command_followup_refresh_delays_for("transfer"))
+        await publish_mqtt_status(command_type="transfer")
     except Exception as exc:
         raise translate_spotify_error(exc) from exc
 
@@ -1527,7 +1534,13 @@ def mqtt_base_url() -> str:
     return f"http://{host}:{settings.port}"
 
 
-def mqtt_status_payload() -> dict[str, Any]:
+def mqtt_status_payload(command_type: str | None = None) -> dict[str, Any]:
+    command_pulse = None
+    if command_type:
+        command_pulse = {
+            "type": command_type,
+            "completed_at": datetime.now(UTC).isoformat(),
+        }
     return status_payload(
         version=broker.version,
         spotify_configured=spotify.spotify_configured,
@@ -1536,11 +1549,12 @@ def mqtt_status_payload() -> dict[str, Any]:
         current_state=broker.current_state,
         target=store.get_target_device(),
         mqtt_connected=settings.mqtt_enabled,
+        command_pulse=command_pulse,
     )
 
 
-async def publish_mqtt_status() -> None:
-    await broker.publish_mqtt_retained("status", mqtt_status_payload())
+async def publish_mqtt_status(command_type: str | None = None) -> None:
+    await broker.publish_mqtt_retained("status", mqtt_status_payload(command_type=command_type))
 
 
 async def refresh_devices_and_publish(client: SpotifyClient) -> dict[str, Any]:
