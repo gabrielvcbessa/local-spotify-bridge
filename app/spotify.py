@@ -409,6 +409,9 @@ class SpotifyClient:
     async def saved_tracks(self, limit: int = 50, offset: int = 0) -> Any:
         return await self.request("GET", "/me/tracks", params={"limit": limit, "offset": offset})
 
+    async def recently_played_tracks(self, limit: int = 50) -> Any:
+        return await self.request("GET", "/me/player/recently-played", params={"limit": limit})
+
     async def fetch_image(self, url: str) -> bytes:
         response = await self._http.get(url)
         response.raise_for_status()
@@ -455,6 +458,18 @@ def compact_tracks(payload: dict[str, Any]) -> CompactPage:
             )
         )
     return compact_page(payload, items)
+
+
+def compact_recent_tracks(payload: dict[str, Any], *, limit: int, offset: int) -> CompactPage:
+    page_items = payload.get("items", [])[offset : offset + limit]
+    window_payload = {
+        "items": page_items,
+        "limit": limit,
+        "offset": offset,
+        "total": len(payload.get("items", [])),
+        "next": offset + limit < len(payload.get("items", [])),
+    }
+    return compact_tracks(window_payload)
 
 
 def compact_track_preview(track: dict[str, Any] | None) -> dict[str, Any] | None:

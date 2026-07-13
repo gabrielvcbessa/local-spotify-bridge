@@ -51,6 +51,7 @@ class FakeDevicesClient:
         self.devices_calls = 0
         self.playlists_calls = 0
         self.saved_tracks_calls = 0
+        self.recent_tracks_calls = 0
 
     async def devices(self):
         self.devices_calls += 1
@@ -99,6 +100,23 @@ class FakeDevicesClient:
     async def saved_tracks(self, *, limit: int, offset: int):
         self.saved_tracks_calls += 1
         return {"total": 5, "items": []}
+
+    async def recently_played_tracks(self, *, limit: int):
+        self.recent_tracks_calls += 1
+        return {
+            "items": [
+                {
+                    "track": {
+                        "id": "recent-1",
+                        "uri": "spotify:track:recent-1",
+                        "name": "Recent One",
+                        "artists": [{"name": "Artist"}],
+                        "album": {"name": "Album", "images": []},
+                        "duration_ms": 123000,
+                    }
+                }
+            ][:limit]
+        }
 
 
 @pytest.mark.asyncio
@@ -208,7 +226,29 @@ async def test_library_root_uses_cached_devices_without_fetching_devices():
         main.cached_devices = previous_cached
 
     assert client.devices_calls == 0
+    assert payload["pages"][2]["kind"] == "recent_tracks"
     assert payload["pages"][2]["total"] == 1
+    assert payload["pages"][3]["total"] == 1
+
+
+@pytest.mark.asyncio
+async def test_recent_tracks_library_page_uses_recent_window():
+    client = FakeDevicesClient()
+
+    payload = await main.build_library_page_payload(
+        client,
+        request_id="recent-1",
+        page=2,
+        kind="recent_tracks",
+        offset=0,
+        limit=3,
+    )
+
+    assert payload["request_id"] == "recent-1"
+    assert payload["kind"] == "recent_tracks"
+    assert payload["title"] == "Recent"
+    assert payload["items"][0]["uri"] == "spotify:track:recent-1"
+    assert payload["items"][0]["item_kind"] == "track"
 
 
 @pytest.mark.asyncio

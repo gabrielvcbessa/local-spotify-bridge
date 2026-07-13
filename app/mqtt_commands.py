@@ -60,7 +60,7 @@ def play_library_item_body(command: dict[str, Any]) -> dict[str, Any]:
             body["position_ms"] = command["position_ms"]
         return body
 
-    if source_kind == "saved_tracks":
+    if source_kind in {"saved_tracks", "recent_tracks"}:
         uris = command.get("uris")
         if isinstance(uris, list) and all(isinstance(uri, str) for uri in uris):
             body = {"uris": uris}

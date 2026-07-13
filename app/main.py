@@ -21,6 +21,7 @@ from .spotify import (
     SpotifyAuthNotConfigured,
     SpotifyClient,
     SpotifyNotConfigured,
+    compact_recent_tracks,
     compact_playlists,
     compact_tracks,
 )
@@ -1258,6 +1259,29 @@ async def compact_saved_tracks(
         raise translate_spotify_error(exc) from exc
 
 
+@app.get("/v1/recent-tracks")
+async def recent_tracks(
+    limit: int = Query(default=50, ge=1, le=50),
+    client: Annotated[SpotifyClient, Depends(spotify_client)] = spotify,
+):
+    try:
+        return await client.recently_played_tracks(limit=limit)
+    except Exception as exc:
+        raise translate_spotify_error(exc) from exc
+
+
+@app.get("/v1/library/recent-tracks")
+async def compact_recent_library_tracks(
+    limit: int = Query(default=50, ge=1, le=50),
+    offset: int = Query(default=0, ge=0),
+    client: Annotated[SpotifyClient, Depends(spotify_client)] = spotify,
+):
+    try:
+        return compact_recent_tracks(await client.recently_played_tracks(limit=50), limit=limit, offset=offset).model_dump(mode="json")
+    except Exception as exc:
+        raise translate_spotify_error(exc) from exc
+
+
 @app.get("/v1/knob/status")
 async def knob_status() -> dict[str, Any]:
     return mqtt_status_payload()
@@ -1286,10 +1310,10 @@ async def knob_library_playlists(
 
 @app.get("/v1/knob/library/page")
 async def knob_library_page(
-    kind: str = Query(pattern="^(playlists|saved_tracks|playlist_tracks|devices)$"),
+    kind: str = Query(pattern="^(playlists|saved_tracks|recent_tracks|playlist_tracks|devices)$"),
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=3, ge=1, le=10),
-    page: int = Query(default=0, ge=0, le=2),
+    page: int = Query(default=0, ge=0, le=3),
     parent_uri: str | None = None,
     request_id: str | None = None,
     client: Annotated[SpotifyClient, Depends(spotify_client)] = spotify,
@@ -1740,11 +1764,13 @@ async def target_device_readiness(
 async def build_library_root_payload(client: SpotifyClient) -> dict[str, Any]:
     playlists_payload = await client.playlists(limit=1, offset=0)
     saved_payload = await client.saved_tracks(limit=1, offset=0)
+    recent_payload = await client.recently_played_tracks(limit=1)
     devices = cached_devices or []
     return library_root_payload(
         version=broker.version,
         playlist_total=playlists_payload.get("total") if isinstance(playlists_payload, dict) else None,
         saved_total=saved_payload.get("total") if isinstance(saved_payload, dict) else None,
+        recent_total=len(recent_payload.get("items", [])) if isinstance(recent_payload, dict) else None,
         device_total=len(devices),
     )
 
@@ -1828,6 +1854,17 @@ async def build_library_page_payload(
             page=page,
             kind=kind,
             title="Saved",
+            compact=compact,
+        )
+
+    if kind == "recent_tracks":
+        compact = compact_recent_tracks(await client.recently_played_tracks(limit=50), limit=limit, offset=offset)
+        return library_page_payload(
+            version=broker.version,
+            request_id=request_id,
+            page=page,
+            kind=kind,
+            title="Recent",
             compact=compact,
         )
 

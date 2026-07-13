@@ -20,12 +20,20 @@ def envelope(*, version: int, payload: dict[str, Any], hash_payload: Any | None 
     return result
 
 
-def library_root_payload(*, version: int, playlist_total: int | None, saved_total: int | None, device_total: int | None) -> dict[str, Any]:
+def library_root_payload(
+    *,
+    version: int,
+    playlist_total: int | None,
+    saved_total: int | None,
+    recent_total: int | None,
+    device_total: int | None,
+) -> dict[str, Any]:
     payload = {
         "pages": [
             {"page": 0, "kind": "playlists", "title": "Playlists", "total": playlist_total, "available": playlist_total is not None},
             {"page": 1, "kind": "saved_tracks", "title": "Saved", "total": saved_total, "available": saved_total is not None},
-            {"page": 2, "kind": "devices", "title": "Devices", "total": device_total, "available": device_total is not None},
+            {"page": 2, "kind": "recent_tracks", "title": "Recent", "total": recent_total, "available": recent_total is not None},
+            {"page": 3, "kind": "devices", "title": "Devices", "total": device_total, "available": device_total is not None},
         ]
     }
     return envelope(version=version, payload=payload)

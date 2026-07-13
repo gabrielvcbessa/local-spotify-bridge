@@ -46,6 +46,12 @@ def test_play_library_item_body_supports_context_and_saved_tracks():
             "item_uri": "spotify:track:2",
         }
     ) == {"uris": ["spotify:track:2"]}
+    assert play_library_item_body(
+        {
+            "source_kind": "recent_tracks",
+            "item_uri": "spotify:track:3",
+        }
+    ) == {"uris": ["spotify:track:3"]}
 
 
 def test_play_library_item_body_rejects_missing_target():
