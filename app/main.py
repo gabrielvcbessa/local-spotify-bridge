@@ -2184,15 +2184,15 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
         else:
             raise ValueError(f"Unsupported MQTT command type: {command_type}")
 
-        await refresh_and_publish(
-            spotify,
-            follow_up_delays=settings.command_followup_refresh_delays_for(command_type) if command_policy.follow_up_refresh else (),
-        )
         await publish_mqtt_status(
             command_type=command_type,
             command_request_id=request_id,
             command_pending=False,
             command_ok=True,
+        )
+        await refresh_and_publish(
+            spotify,
+            follow_up_delays=settings.command_followup_refresh_delays_for(command_type) if command_policy.follow_up_refresh else (),
         )
         return {
             "state_version": broker.version,

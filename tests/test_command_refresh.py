@@ -355,6 +355,30 @@ async def test_mqtt_transfer_refreshes_devices_and_state(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_mqtt_command_success_status_publishes_before_state_refresh(monkeypatch):
+    client = FakeCommandSpotifyClient()
+    events = []
+
+    async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
+        events.append(("refresh", tuple(follow_up_delays)))
+
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None):
+        events.append(("status", command_type, command_request_id, command_pending, command_ok))
+
+    monkeypatch.setattr(main, "spotify", client)
+    monkeypatch.setattr(main, "refresh_and_publish", fake_refresh_and_publish)
+    monkeypatch.setattr(main, "publish_mqtt_status", fake_publish_mqtt_status)
+
+    await main.handle_mqtt_command({"request_id": "knob-next-ack", "type": "next"})
+
+    assert events == [
+        ("status", "next", "knob-next-ack", True, None),
+        ("status", "next", "knob-next-ack", False, True),
+        ("refresh", main.settings.command_followup_refresh_delays_for("next")),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_mqtt_save_track_uses_payload_track_uri_and_publishes_status(monkeypatch):
     client = FakeCommandSpotifyClient()
     refreshes = []
