@@ -879,9 +879,16 @@ async def test_rest_set_target_refreshes_devices_before_status(monkeypatch):
         events.append(("devices", _client))
         return {"items": []}
 
-    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None):
+    async def fake_publish_mqtt_status(
+        command_type=None,
+        command_request_id=None,
+        command_pending=None,
+        command_ok=None,
+        command_error=None,
+        force_publish=False,
+    ):
         _ = (command_request_id, command_pending)
-        events.append(("status", command_type))
+        events.append(("status", command_type, force_publish))
 
     monkeypatch.setattr(client, "spotify_configured", True, raising=False)
     monkeypatch.setattr(main, "refresh_devices_and_publish", fake_refresh_devices_and_publish)
@@ -898,7 +905,7 @@ async def test_rest_set_target_refreshes_devices_before_status(monkeypatch):
     assert events == [
         ("target", main.TargetDevice(device_id="speaker-1", device_name=None)),
         ("devices", client),
-        ("status", "set_target"),
+        ("status", "set_target", True),
     ]
 
 
@@ -1086,9 +1093,16 @@ async def test_rest_target_changes_publish_status_pulse(monkeypatch):
     status_pulses = []
     targets = []
 
-    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None):
+    async def fake_publish_mqtt_status(
+        command_type=None,
+        command_request_id=None,
+        command_pending=None,
+        command_ok=None,
+        command_error=None,
+        force_publish=False,
+    ):
         _ = command_pending
-        status_pulses.append((command_type, command_request_id, command_ok))
+        status_pulses.append((command_type, command_request_id, command_ok, force_publish))
 
     monkeypatch.setattr(main.store, "set_target_device", lambda target: targets.append(target))
     monkeypatch.setattr(main, "publish_mqtt_status", fake_publish_mqtt_status)
@@ -1100,4 +1114,4 @@ async def test_rest_target_changes_publish_status_pulse(monkeypatch):
     await main.set_target(TargetDeviceCommand(), client=client, state_store=main.store)
 
     assert [target.device_id if target else None for target in targets] == ["speaker-1", None]
-    assert status_pulses == [("set_target", None, True), ("clear_target", None, True)]
+    assert status_pulses == [("set_target", None, True, True), ("clear_target", None, True, True)]

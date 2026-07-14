@@ -1191,7 +1191,7 @@ async def set_target(
 ) -> dict[str, Any]:
     if not command.device_id and not command.device_name:
         state_store.set_target_device(None)
-        await publish_mqtt_status(command_type="clear_target", command_ok=True)
+        await publish_mqtt_status(command_type="clear_target", command_ok=True, force_publish=True)
         return {"target": None, "resolved_device_id": None}
 
     target = TargetDevice(device_id=command.device_id, device_name=command.device_name)
@@ -1226,7 +1226,7 @@ async def set_target(
         else:
             if client.spotify_configured:
                 await refresh_devices_and_publish(client)
-            await publish_mqtt_status(command_type="set_target", command_ok=True)
+            await publish_mqtt_status(command_type="set_target", command_ok=True, force_publish=True)
     except Exception as exc:
         raise translate_spotify_error(exc) from exc
     return {
