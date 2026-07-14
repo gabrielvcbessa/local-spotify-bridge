@@ -1670,21 +1670,23 @@ async def refresh_and_publish(
     *,
     follow_up_delays: tuple[float, ...] = (),
     force_publish: bool = False,
-) -> None:
-    await broker.publish_if_changed(await client.current_playback(), force=force_publish)
+) -> bool:
+    published = await broker.publish_if_changed(await client.current_playback(), force=force_publish)
     for delay in follow_up_delays:
         asyncio.create_task(delayed_refresh_and_publish(client, delay))
+    return published
 
 
 async def refresh_after_successful_command(
     client: SpotifyClient,
     *,
     follow_up_delays: tuple[float, ...] = (),
-) -> None:
+) -> bool:
     try:
-        await refresh_and_publish(client, follow_up_delays=follow_up_delays, force_publish=True)
+        return await refresh_and_publish(client, follow_up_delays=follow_up_delays, force_publish=True)
     except Exception as exc:
         broker.mark_spotify_error(exc)
+        return False
 
 
 async def refresh_devices_after_successful_command(client: SpotifyClient) -> None:
@@ -2404,13 +2406,15 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
         )
         if command_policy.refresh_devices:
             await refresh_devices_after_successful_command(spotify)
-        await refresh_after_successful_command(
+        published_state = await refresh_after_successful_command(
             spotify,
             follow_up_delays=settings.command_followup_refresh_delays_for(command_type) if command_policy.follow_up_refresh else (),
         )
         return {
             "state_version": broker.version,
-            "published_state": True,
+            "published_state": published_state,
+            "state_refresh_ok": published_state,
+            "state_publish_forced": True,
             "playback_affecting": command_policy.playback_affecting,
         }
     except Exception as exc:

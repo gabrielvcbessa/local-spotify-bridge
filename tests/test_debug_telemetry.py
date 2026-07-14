@@ -176,6 +176,8 @@ def test_health_exposes_recent_mqtt_command_status(monkeypatch):
                 "command": "pause",
                 "state_version": 42,
                 "published_state": True,
+                "state_refresh_ok": True,
+                "state_publish_forced": True,
             }
         )
 
@@ -199,6 +201,8 @@ def test_health_exposes_recent_mqtt_command_status(monkeypatch):
         "error_envelope": None,
         "state_version": 42,
         "published_state": True,
+        "state_refresh_ok": True,
+        "state_publish_forced": True,
         "idempotent_replay": None,
         "received_at": None,
         "completed_at": None,

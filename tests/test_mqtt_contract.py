@@ -69,6 +69,7 @@ def test_mqtt_knob_config_payload_advertises_protocol_and_topics():
     assert readiness_contract["last_update_at_field"] is True
     assert "status_command_ok" in payload["protocol"]["features"]
     assert "status_command_error" in payload["protocol"]["features"]
+    assert "command_state_refresh_result" in payload["protocol"]["features"]
     assert "target_ready" in payload["capabilities"]["runtime_states"]
     assert "save_current_track" in MQTT_KNOB_COMMANDS
     assert "unsave_current_track" in MQTT_KNOB_COMMANDS

@@ -145,10 +145,11 @@ async def test_refresh_and_publish_schedules_follow_up_refreshes(monkeypatch):
     monkeypatch.setattr(main.broker, "publish_if_changed", fake_publish_if_changed)
     monkeypatch.setattr(main.asyncio, "create_task", fake_create_task)
 
-    await main.refresh_and_publish(client, follow_up_delays=(0.5, 1.5))
+    did_publish = await main.refresh_and_publish(client, follow_up_delays=(0.5, 1.5))
 
     assert published == ["Song 1", "force=False"]
     assert len(scheduled) == 2
+    assert did_publish is True
 
 
 @pytest.mark.asyncio
@@ -162,9 +163,10 @@ async def test_refresh_after_successful_command_forces_state_publish(monkeypatch
 
     monkeypatch.setattr(main.broker, "publish_if_changed", fake_publish_if_changed)
 
-    await main.refresh_after_successful_command(client)
+    did_publish = await main.refresh_after_successful_command(client)
 
     assert calls == [("Song 1", True)]
+    assert did_publish is True
 
 
 @pytest.mark.asyncio
@@ -368,6 +370,7 @@ async def test_mqtt_transfer_refreshes_devices_and_state(monkeypatch):
     async def fake_refresh_and_publish(_client, *, follow_up_delays=(), force_publish=False):
         events.append(("refresh", tuple(follow_up_delays), force_publish))
         refreshes.append(tuple(follow_up_delays))
+        return True
 
     async def fake_refresh_devices_and_publish(_client):
         events.append(("devices", _client))
@@ -410,7 +413,7 @@ async def test_mqtt_transfer_success_survives_device_refresh_failure(monkeypatch
         raise RuntimeError("devices unavailable")
 
     async def fake_refresh_and_publish(_client, *, follow_up_delays=(), force_publish=False):
-        return None
+        return True
 
     async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None):
         status_pulses.append((command_type, command_request_id, command_pending, command_ok))
@@ -430,6 +433,8 @@ async def test_mqtt_transfer_success_survives_device_refresh_failure(monkeypatch
         main.broker.last_spotify_error = previous_error
 
     assert result["published_state"] is True
+    assert result["state_refresh_ok"] is True
+    assert result["state_publish_forced"] is True
     assert client.calls == [("transfer", "speaker-1")]
     assert status_pulses == [
         ("transfer", "knob-transfer-device-refresh-fail", True, None),
@@ -444,6 +449,7 @@ async def test_mqtt_command_success_status_publishes_before_state_refresh(monkey
 
     async def fake_refresh_and_publish(_client, *, follow_up_delays=(), force_publish=False):
         events.append(("refresh", tuple(follow_up_delays), force_publish))
+        return True
 
     async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None):
         events.append(("status", command_type, command_request_id, command_pending, command_ok))
@@ -483,7 +489,9 @@ async def test_mqtt_command_success_survives_refresh_failure(monkeypatch):
     finally:
         main.broker.last_spotify_error = previous_error
 
-    assert result["published_state"] is True
+    assert result["published_state"] is False
+    assert result["state_refresh_ok"] is False
+    assert result["state_publish_forced"] is True
     assert result["playback_affecting"] is True
     assert status_pulses == [
         ("next", "knob-next-refresh-fail", True, None),

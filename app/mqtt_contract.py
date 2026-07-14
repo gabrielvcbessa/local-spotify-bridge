@@ -17,6 +17,7 @@ MQTT_KNOB_FEATURES = [
     "command_request_id",
     "idempotent_command_result",
     "command_latency",
+    "command_state_refresh_result",
     "status_command_ok",
     "status_command_error",
     "retained_rgb565_art",
