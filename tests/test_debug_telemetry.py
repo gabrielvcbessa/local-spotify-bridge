@@ -199,8 +199,11 @@ def test_health_exposes_consumer_detection_and_current_polling_thresholds():
         payload["backend_capabilities"]["architecture"]["direct_spotify_migration_next"]
         == "firmware_token_refresh_and_playback_commands"
     )
-    assert payload["backend_capabilities"]["architecture"]["profile_model"] == "single_bridge_profile"
-    assert payload["backend_capabilities"]["architecture"]["multi_profile_selection"] is False
+    assert payload["backend_capabilities"]["architecture"]["profile_model"] == "profile_registry"
+    assert payload["backend_capabilities"]["architecture"]["multi_profile_selection"] is True
+    assert payload["backend_capabilities"]["architecture"]["multi_profile_selection_blocker"] == ""
+    assert payload["backend_capabilities"]["architecture"]["active_profile_id"] == "default"
+    assert payload["backend_capabilities"]["architecture"]["profile_registry"]["profiles"][0]["id"] == "default"
     assert payload["backend_capabilities"]["library"]["recent_tracks"] is True
     assert payload["backend_capabilities"]["devices"]["readiness"] is True
     assert "zero_volume" in payload["backend_capabilities"]["devices"]["readiness_contract"]["risk_taxonomy"]

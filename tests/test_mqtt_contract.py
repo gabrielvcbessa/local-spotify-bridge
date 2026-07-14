@@ -1,11 +1,11 @@
 from app.art import ArtOptions
 from app.models import PlaybackSnapshot
 from app.mqtt_contract import (
-    MQTT_KNOB_BACKEND_CAPABILITIES,
     MQTT_KNOB_FEATURES,
     MQTT_KNOB_COMMANDS,
     MQTT_KNOB_SCHEMA_VERSION,
     mqtt_control_state_payload,
+    mqtt_backend_capabilities,
     mqtt_knob_config_payload,
 )
 from app.mqtt_commands import MQTT_READY_TARGET_GUARDED_COMMANDS
@@ -45,7 +45,7 @@ def test_mqtt_knob_config_payload_advertises_protocol_and_topics():
     assert payload["topics"]["control_state"] == "rotary/knob/control_state"
     assert payload["retain"]["control_state"] is True
     assert payload["art"]["topics"]["current"] == "rotary/knob/art/current/rgb565"
-    assert payload["capabilities"] == MQTT_KNOB_BACKEND_CAPABILITIES
+    assert payload["capabilities"] == mqtt_backend_capabilities()
     assert payload["capabilities"]["transport"] == "spotify_web_api"
     assert payload["capabilities"]["architecture"]["role"] == "lan_spotify_web_api_proxy"
     assert payload["capabilities"]["architecture"]["control_plane"] == "bridge"
@@ -57,12 +57,12 @@ def test_mqtt_knob_config_payload_advertises_protocol_and_topics():
         payload["capabilities"]["architecture"]["direct_spotify_migration_next"]
         == "firmware_token_refresh_and_playback_commands"
     )
-    assert payload["capabilities"]["architecture"]["profile_model"] == "single_bridge_profile"
-    assert payload["capabilities"]["architecture"]["multi_profile_selection"] is False
-    assert (
-        payload["capabilities"]["architecture"]["multi_profile_selection_blocker"]
-        == "profile_registry_not_implemented"
-    )
+    assert payload["capabilities"]["architecture"]["profile_model"] == "profile_registry"
+    assert payload["capabilities"]["architecture"]["multi_profile_selection"] is True
+    assert payload["capabilities"]["architecture"]["multi_profile_selection_blocker"] == ""
+    assert payload["capabilities"]["architecture"]["active_profile_id"] == "default"
+    assert payload["capabilities"]["architecture"]["profile_count"] == 1
+    assert payload["capabilities"]["architecture"]["profile_registry"]["profiles"][0]["id"] == "default"
     assert (
         payload["capabilities"]["architecture"]["direct_spotify_on_device_blocker"]
         == "requires_browser_pairing_and_token_storage_hardening"
@@ -89,6 +89,52 @@ def test_mqtt_knob_config_payload_advertises_protocol_and_topics():
     assert "target_ready" in payload["capabilities"]["runtime_states"]
     assert "save_current_track" in MQTT_KNOB_COMMANDS
     assert "unsave_current_track" in MQTT_KNOB_COMMANDS
+
+
+def test_mqtt_knob_config_payload_accepts_profile_registry():
+    registry = {
+        "schema_version": 1,
+        "active_profile_id": "home",
+        "selection_supported": True,
+        "selection_transport": "bridge_profile_registry",
+        "profiles": [
+            {"id": "home", "name": "Home", "credential_owner": "local_bridge", "token_storage": "runtime", "active": True},
+            {"id": "work", "name": "Work", "credential_owner": "local_bridge", "token_storage": "runtime", "active": False},
+        ],
+    }
+    payload = mqtt_knob_config_payload(
+        device_id="knob",
+        qos=1,
+        topics={
+            "state": "rotary/knob/state",
+            "control_state": "rotary/knob/control_state",
+            "config": "rotary/knob/config",
+            "command": "rotary/knob/command",
+            "command_result": "rotary/knob/command_result",
+            "availability": "rotary/knob/availability",
+            "library_root": "rotary/knob/library/root",
+            "library_page": "rotary/knob/library/page",
+            "library_playlists": "rotary/knob/library/playlists",
+            "devices": "rotary/knob/devices",
+            "status": "rotary/knob/status",
+            "request": "rotary/knob/request",
+            "request_result": "rotary/knob/request_result",
+            "art_current": "rotary/knob/art/current/rgb565",
+            "art_next": "rotary/knob/art/next/rgb565",
+            "art_previous": "rotary/knob/art/previous/rgb565",
+        },
+        base_url="http://bridge.local:8090",
+        art_options=ArtOptions(size=360, swap="lvgl", variant="player-bg"),
+        profile_registry=registry,
+    )
+
+    architecture = payload["capabilities"]["architecture"]
+    assert architecture["profile_model"] == "profile_registry"
+    assert architecture["multi_profile_selection"] is True
+    assert architecture["multi_profile_selection_blocker"] == ""
+    assert architecture["active_profile_id"] == "home"
+    assert architecture["profile_count"] == 2
+    assert architecture["profile_registry"] == registry
 
 
 def test_mqtt_control_state_payload_is_small_fast_state():

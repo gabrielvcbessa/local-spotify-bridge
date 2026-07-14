@@ -19,7 +19,8 @@ from .knob import knob_snapshot
 from .knob_mqtt import devices_payload, envelope, library_item_payload, library_page_payload, library_root_payload, status_payload
 from .models import PlaybackCommand, PlaybackSnapshot, SeekCommand, TargetDeviceCommand, TransferPlaybackCommand, VolumeCommand
 from .mqtt_commands import mqtt_command_policy, play_library_item_body, playback_body_from_mqtt, playlist_id_from_uri
-from .mqtt_contract import MQTT_KNOB_BACKEND_CAPABILITIES, mqtt_control_state_payload, mqtt_knob_config_payload, mqtt_protocol_payload
+from .mqtt_contract import mqtt_backend_capabilities, mqtt_control_state_payload, mqtt_knob_config_payload, mqtt_protocol_payload
+from .profiles import bridge_profile_registry
 from .spotify import (
     SpotifyAuthNotConfigured,
     SpotifyClient,
@@ -253,6 +254,14 @@ def bridge_build_info() -> dict[str, Any]:
     }
 
 
+def active_profile_registry() -> dict[str, Any]:
+    return bridge_profile_registry(settings)
+
+
+def backend_capabilities() -> dict[str, Any]:
+    return mqtt_backend_capabilities(active_profile_registry())
+
+
 @app.get("/health")
 async def health() -> dict[str, Any]:
     target = store.get_target_device()
@@ -283,7 +292,7 @@ async def health() -> dict[str, Any]:
         "build": bridge_build_info(),
         "direct_spotify": direct_spotify_status(spotify),
         "mqtt_protocol": mqtt_protocol_payload(),
-        "backend_capabilities": MQTT_KNOB_BACKEND_CAPABILITIES,
+        "backend_capabilities": backend_capabilities(),
         "mqtt_enabled": settings.mqtt_enabled,
         "mqtt_connected": mqtt_connection["connected"],
         "mqtt_connection": mqtt_connection,
@@ -2087,6 +2096,7 @@ def mqtt_knob_config() -> dict[str, Any]:
         base_url=mqtt_base_url(),
         art_options=art_options,
         build=bridge_build_info(),
+        profile_registry=active_profile_registry(),
     )
 
 

@@ -64,9 +64,9 @@ MQTT_KNOB_BACKEND_CAPABILITIES: dict[str, Any] = {
         "direct_spotify_migration_next": "firmware_token_refresh_and_playback_commands",
         "oauth_owner": "local_bridge",
         "token_storage": "bridge_runtime_or_environment",
-        "profile_model": "single_bridge_profile",
-        "multi_profile_selection": False,
-        "multi_profile_selection_blocker": "profile_registry_not_implemented",
+        "profile_model": "profile_registry",
+        "multi_profile_selection": True,
+        "multi_profile_selection_blocker": "",
     },
     "runtime_states": [
         "configured",
@@ -124,6 +124,33 @@ MQTT_KNOB_BACKEND_CAPABILITIES: dict[str, Any] = {
 }
 
 
+def mqtt_backend_capabilities(profile_registry: dict[str, Any] | None = None) -> dict[str, Any]:
+    capabilities = dict(MQTT_KNOB_BACKEND_CAPABILITIES)
+    architecture = dict(capabilities["architecture"])
+    registry = profile_registry or {
+        "schema_version": 1,
+        "active_profile_id": "default",
+        "profiles": [
+            {
+                "id": "default",
+                "name": "Local bridge",
+                "credential_owner": "local_bridge",
+                "token_storage": "bridge_runtime_or_environment",
+                "active": True,
+            }
+        ],
+        "selection_supported": True,
+        "selection_transport": "bridge_profile_registry",
+    }
+    architecture["profile_registry"] = registry
+    architecture["active_profile_id"] = registry.get("active_profile_id", "")
+    architecture["profile_count"] = len(registry.get("profiles") or [])
+    architecture["multi_profile_selection"] = bool(registry.get("selection_supported", True))
+    architecture["multi_profile_selection_blocker"] = ""
+    capabilities["architecture"] = architecture
+    return capabilities
+
+
 def mqtt_protocol_payload() -> dict[str, Any]:
     return {
         "name": MQTT_KNOB_PROTOCOL_NAME,
@@ -142,6 +169,7 @@ def mqtt_knob_config_payload(
     base_url: str,
     art_options: ArtOptions,
     build: dict[str, Any] | None = None,
+    profile_registry: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload = {
         "schema_version": MQTT_KNOB_SCHEMA_VERSION,
@@ -183,7 +211,7 @@ def mqtt_knob_config_payload(
         },
         "commands": MQTT_KNOB_COMMANDS,
         "requests": MQTT_KNOB_REQUESTS,
-        "capabilities": MQTT_KNOB_BACKEND_CAPABILITIES,
+        "capabilities": mqtt_backend_capabilities(profile_registry),
         "limits": {
             "knob_visible_rows": 3,
             "library_page_limit": 3,
