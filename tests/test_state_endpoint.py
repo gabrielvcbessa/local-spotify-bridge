@@ -71,6 +71,25 @@ def test_mqtt_knob_config_defaults_to_stopwatch_art_size():
     }
 
 
+def test_knob_config_endpoint_mirrors_retained_mqtt_contract():
+    response = TestClient(app).get("/v1/knob/config")
+
+    assert response.status_code == 200
+    config = response.json()
+    assert config["schema_version"] == 2
+    assert config["protocol"] == mqtt_protocol_payload()
+    assert config["topics"]["config"] == "rotary/knob/config"
+    assert config["topics"]["status"] == "rotary/knob/status"
+    assert config["topics"]["command_result"] == "rotary/knob/command_result"
+    assert config["topics"]["availability"] == "rotary/knob/availability"
+    assert config["retain"]["config"] is True
+    assert config["retain"]["command_result"] is False
+    assert config["http"]["snapshot_url"] == "http://localhost:8090/v1/knob/snapshot"
+    assert config["capabilities"]["architecture"]["recommended_client_transport"] == "mqtt"
+    assert config["capabilities"]["architecture"]["direct_spotify_on_device"] is False
+    assert config["capabilities"]["architecture"]["direct_spotify_bridge_proxy"] is True
+
+
 def test_mqtt_art_annotation_adds_topic_and_local_cache_path():
     state = PlaybackSnapshot(
         album_art_url="https://i.scdn.co/image/current-art",

@@ -2019,6 +2019,11 @@ async def mqtt_knob_snapshot(version: int, state, force_publish: bool = False) -
     return snapshot
 
 
+@app.get("/v1/knob/config")
+async def get_knob_config() -> dict[str, Any]:
+    return mqtt_knob_config()
+
+
 def mqtt_knob_config() -> dict[str, Any]:
     art_options = mqtt_art_options()
     return mqtt_knob_config_payload(
