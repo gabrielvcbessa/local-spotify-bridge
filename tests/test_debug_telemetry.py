@@ -162,6 +162,9 @@ def test_health_exposes_consumer_detection_and_current_polling_thresholds():
     assert payload["direct_spotify"]["token_source"] in {"runtime", "environment", "none"}
     assert payload["direct_spotify"]["token_secret_exposed"] is False
     assert payload["direct_spotify"]["credential_owner"] == "local_bridge"
+    assert "user-library-modify" in payload["direct_spotify"]["requested_scopes"]
+    assert "user-library-modify" in payload["direct_spotify"]["required_feature_scopes"]
+    assert payload["direct_spotify"]["missing_required_scopes"] == []
     assert "refresh_token" not in payload["direct_spotify"]
     assert payload["build"]["commit"]
     assert payload["build"]["ref"]

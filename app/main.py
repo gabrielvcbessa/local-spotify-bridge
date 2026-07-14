@@ -189,12 +189,19 @@ async def spotify_auth_not_configured_handler(_, exc: SpotifyAuthNotConfigured):
 def direct_spotify_status(client: SpotifyClient | None = None) -> dict[str, Any]:
     client = client or spotify
     token_source = getattr(client, "refresh_token_source", "none")
+    requested_scopes = settings.spotify_scope_list
+    required_feature_scopes = ["user-library-read", "user-library-modify"]
     return {
         "transport": "spotify_web_api",
         "pairing_supported": settings.spotify_auth_configured,
         "paired": bool(getattr(client, "spotify_configured", False)),
         "token_source": token_source,
         "token_present": token_source != "none",
+        "requested_scopes": requested_scopes,
+        "required_feature_scopes": required_feature_scopes,
+        "missing_required_scopes": [
+            scope for scope in required_feature_scopes if scope not in requested_scopes
+        ],
         "credential_owner": "local_bridge",
         "runtime_token_store": True,
         "token_secret_exposed": False,

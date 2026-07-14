@@ -1353,6 +1353,7 @@ def test_mqtt_status_payload_uses_cached_target_readiness(monkeypatch):
     assert payload["direct_spotify"]["transport"] == "spotify_web_api"
     assert payload["direct_spotify"]["credential_owner"] == "local_bridge"
     assert payload["direct_spotify"]["token_secret_exposed"] is False
+    assert payload["direct_spotify"]["missing_required_scopes"] == []
     assert "refresh_token" not in payload["direct_spotify"]
 
 
