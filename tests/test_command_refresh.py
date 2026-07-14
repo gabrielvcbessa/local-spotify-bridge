@@ -132,8 +132,9 @@ async def test_refresh_and_publish_schedules_follow_up_refreshes(monkeypatch):
     published: list[str | None] = []
     scheduled = []
 
-    async def fake_publish_if_changed(state):
+    async def fake_publish_if_changed(state, *, force=False):
         published.append(state.title if state else None)
+        published.append(f"force={force}")
         return True
 
     def fake_create_task(coro):
@@ -146,8 +147,24 @@ async def test_refresh_and_publish_schedules_follow_up_refreshes(monkeypatch):
 
     await main.refresh_and_publish(client, follow_up_delays=(0.5, 1.5))
 
-    assert published == ["Song 1"]
+    assert published == ["Song 1", "force=False"]
     assert len(scheduled) == 2
+
+
+@pytest.mark.asyncio
+async def test_refresh_after_successful_command_forces_state_publish(monkeypatch):
+    client = FakeSpotifyClient()
+    calls = []
+
+    async def fake_publish_if_changed(state, *, force=False):
+        calls.append((state.title if state else None, force))
+        return True
+
+    monkeypatch.setattr(main.broker, "publish_if_changed", fake_publish_if_changed)
+
+    await main.refresh_after_successful_command(client)
+
+    assert calls == [("Song 1", True)]
 
 
 @pytest.mark.asyncio
@@ -294,7 +311,7 @@ async def test_mqtt_next_previous_do_not_use_implicit_target_device(monkeypatch)
     refreshes = []
     status_pulses = []
 
-    async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
+    async def fake_refresh_and_publish(_client, *, follow_up_delays=(), force_publish=False):
         refreshes.append(tuple(follow_up_delays))
 
     async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None):
@@ -336,8 +353,8 @@ async def test_mqtt_transfer_refreshes_devices_and_state(monkeypatch):
     events = []
     status_pulses = []
 
-    async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
-        events.append(("refresh", tuple(follow_up_delays)))
+    async def fake_refresh_and_publish(_client, *, follow_up_delays=(), force_publish=False):
+        events.append(("refresh", tuple(follow_up_delays), force_publish))
         refreshes.append(tuple(follow_up_delays))
 
     async def fake_refresh_devices_and_publish(_client):
@@ -367,7 +384,7 @@ async def test_mqtt_transfer_refreshes_devices_and_state(monkeypatch):
         ("status", "transfer", "knob-transfer-1", True, None),
         ("status", "transfer", "knob-transfer-1", False, True),
         ("devices", client),
-        ("refresh", main.settings.command_followup_refresh_delays_for("transfer")),
+        ("refresh", main.settings.command_followup_refresh_delays_for("transfer"), True),
     ]
 
 
@@ -380,7 +397,7 @@ async def test_mqtt_transfer_success_survives_device_refresh_failure(monkeypatch
     async def fake_refresh_devices_and_publish(_client):
         raise RuntimeError("devices unavailable")
 
-    async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
+    async def fake_refresh_and_publish(_client, *, follow_up_delays=(), force_publish=False):
         return None
 
     async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None):
@@ -413,8 +430,8 @@ async def test_mqtt_command_success_status_publishes_before_state_refresh(monkey
     client = FakeCommandSpotifyClient()
     events = []
 
-    async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
-        events.append(("refresh", tuple(follow_up_delays)))
+    async def fake_refresh_and_publish(_client, *, follow_up_delays=(), force_publish=False):
+        events.append(("refresh", tuple(follow_up_delays), force_publish))
 
     async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None):
         events.append(("status", command_type, command_request_id, command_pending, command_ok))
@@ -428,7 +445,7 @@ async def test_mqtt_command_success_status_publishes_before_state_refresh(monkey
     assert events == [
         ("status", "next", "knob-next-ack", True, None),
         ("status", "next", "knob-next-ack", False, True),
-        ("refresh", main.settings.command_followup_refresh_delays_for("next")),
+        ("refresh", main.settings.command_followup_refresh_delays_for("next"), True),
     ]
 
 
@@ -438,7 +455,7 @@ async def test_mqtt_command_success_survives_refresh_failure(monkeypatch):
     status_pulses = []
     previous_error = main.broker.last_spotify_error
 
-    async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
+    async def fake_refresh_and_publish(_client, *, follow_up_delays=(), force_publish=False):
         raise RuntimeError("refresh unavailable")
 
     async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None):
@@ -468,7 +485,7 @@ async def test_mqtt_save_track_uses_payload_track_uri_and_publishes_status(monke
     refreshes = []
     status_pulses = []
 
-    async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
+    async def fake_refresh_and_publish(_client, *, follow_up_delays=(), force_publish=False):
         refreshes.append(tuple(follow_up_delays))
 
     async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None):
@@ -500,7 +517,7 @@ async def test_mqtt_unsave_track_falls_back_to_current_state(monkeypatch):
     refreshes = []
     status_pulses = []
 
-    async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
+    async def fake_refresh_and_publish(_client, *, follow_up_delays=(), force_publish=False):
         refreshes.append(tuple(follow_up_delays))
 
     async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None):
@@ -529,7 +546,7 @@ async def test_mqtt_play_pause_does_not_use_implicit_target_device(monkeypatch):
     client = FakeCommandSpotifyClient()
     refreshes = []
 
-    async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
+    async def fake_refresh_and_publish(_client, *, follow_up_delays=(), force_publish=False):
         refreshes.append(tuple(follow_up_delays))
 
     async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None):
@@ -568,7 +585,7 @@ async def test_rest_controls_use_command_specific_follow_up_profiles(monkeypatch
     refreshes = []
     status_pulses = []
 
-    async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
+    async def fake_refresh_and_publish(_client, *, follow_up_delays=(), force_publish=False):
         events.append(("refresh", tuple(follow_up_delays)))
         refreshes.append(tuple(follow_up_delays))
 
@@ -619,7 +636,7 @@ async def test_rest_seek_and_volume_publish_status_before_refresh(monkeypatch):
     client = FakeCommandSpotifyClient()
     events = []
 
-    async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
+    async def fake_refresh_and_publish(_client, *, follow_up_delays=(), force_publish=False):
         events.append(("refresh", tuple(follow_up_delays)))
 
     async def fake_command_device_id(_client, device_id):
@@ -651,7 +668,7 @@ async def test_rest_control_success_survives_refresh_failure(monkeypatch):
     status_pulses = []
     previous_error = main.broker.last_spotify_error
 
-    async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
+    async def fake_refresh_and_publish(_client, *, follow_up_delays=(), force_publish=False):
         raise RuntimeError("rest refresh unavailable")
 
     async def fake_command_device_id(_client, device_id):
@@ -683,7 +700,7 @@ async def test_rest_transfer_paths_use_transfer_follow_up_profile(monkeypatch):
     targets = []
     status_pulses = []
 
-    async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
+    async def fake_refresh_and_publish(_client, *, follow_up_delays=(), force_publish=False):
         events.append(("refresh", tuple(follow_up_delays)))
         refreshes.append(tuple(follow_up_delays))
 
@@ -746,7 +763,7 @@ async def test_rest_transfer_success_survives_device_refresh_failure(monkeypatch
     async def fake_refresh_devices_and_publish(_client):
         raise RuntimeError("rest devices unavailable")
 
-    async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
+    async def fake_refresh_and_publish(_client, *, follow_up_delays=(), force_publish=False):
         return None
 
     async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None):

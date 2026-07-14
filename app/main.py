@@ -1669,8 +1669,9 @@ async def refresh_and_publish(
     client: SpotifyClient,
     *,
     follow_up_delays: tuple[float, ...] = (),
+    force_publish: bool = False,
 ) -> None:
-    await broker.publish_if_changed(await client.current_playback())
+    await broker.publish_if_changed(await client.current_playback(), force=force_publish)
     for delay in follow_up_delays:
         asyncio.create_task(delayed_refresh_and_publish(client, delay))
 
@@ -1681,7 +1682,7 @@ async def refresh_after_successful_command(
     follow_up_delays: tuple[float, ...] = (),
 ) -> None:
     try:
-        await refresh_and_publish(client, follow_up_delays=follow_up_delays)
+        await refresh_and_publish(client, follow_up_delays=follow_up_delays, force_publish=True)
     except Exception as exc:
         broker.mark_spotify_error(exc)
 

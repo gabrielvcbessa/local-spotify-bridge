@@ -54,6 +54,41 @@ async def test_mqtt_publish_includes_legacy_and_retained_knob_snapshot():
 
 
 @pytest.mark.anyio
+async def test_forced_publish_republishes_unchanged_mqtt_snapshot():
+    broker = ConnectionBroker(
+        Settings(
+            MQTT_ENABLED=True,
+            MQTT_TOPIC_PREFIX="local-spotify-bridge",
+            MQTT_KNOB_TOPIC_PREFIX="rotary",
+            MQTT_KNOB_DEVICE_ID="kitchen",
+        )
+    )
+    mqtt = FakeMqttClient()
+    broker._mqtt_client = mqtt
+    state = PlaybackSnapshot(title="Song")
+    broker.current_state = state
+
+    async def snapshot_factory(version, snapshot_state):
+        return {
+            "version": version,
+            "state_title": snapshot_state.title if snapshot_state else None,
+        }
+
+    broker.set_mqtt_snapshot_factory(snapshot_factory)
+
+    changed = await broker.publish_if_changed(state)
+    forced = await broker.publish_if_changed(state, force=True)
+
+    assert changed is False
+    assert forced is True
+    assert broker.version == 1
+    assert mqtt.published[0][0] == "local-spotify-bridge/playback"
+    assert json.loads(mqtt.published[0][1])["event"] == "playback.refreshed"
+    assert mqtt.published[1][0] == "rotary/kitchen/state"
+    assert json.loads(mqtt.published[1][1]) == {"version": 1, "state_title": "Song"}
+
+
+@pytest.mark.anyio
 async def test_mqtt_config_is_retained():
     broker = ConnectionBroker(
         Settings(

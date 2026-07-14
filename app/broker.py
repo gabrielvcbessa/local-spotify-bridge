@@ -318,7 +318,7 @@ class ConnectionBroker:
         async with self._lock:
             self._websockets.discard(websocket)
 
-    async def publish_if_changed(self, new_state: PlaybackSnapshot | None) -> bool:
+    async def publish_if_changed(self, new_state: PlaybackSnapshot | None, *, force: bool = False) -> bool:
         self.mark_spotify_success()
         track_changed = playback_track_changed(self.current_state, new_state)
         new_state = enrich_with_previous_track(
@@ -331,14 +331,14 @@ class ConnectionBroker:
             new_state,
             progress_drift_ms=self._settings.state_change_progress_drift_ms,
         )
-        if not changed:
+        if not changed and not force:
             return False
 
         if track_changed:
             self.clear_forward_transition_expected()
         self.current_state = new_state
         self._version += 1
-        await self.publish("playback.changed", new_state)
+        await self.publish("playback.changed" if changed else "playback.refreshed", new_state)
         return True
 
     def mark_forward_transition_expected(self, ttl_seconds: float = 12.0) -> None:
