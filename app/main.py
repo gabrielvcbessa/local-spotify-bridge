@@ -1099,8 +1099,8 @@ async def play(command: PlaybackCommand, client: Annotated[SpotifyClient, Depend
     try:
         device_id = await command_device_id(client, command.device_id)
         await client.play(body=body, device_id=device_id)
-        await refresh_and_publish(client, follow_up_delays=settings.command_followup_refresh_delays_for("play"))
         await publish_mqtt_status(command_type="play", command_ok=True)
+        await refresh_and_publish(client, follow_up_delays=settings.command_followup_refresh_delays_for("play"))
     except Exception as exc:
         raise translate_spotify_error(exc) from exc
 
@@ -1112,8 +1112,8 @@ async def pause(
 ):
     try:
         await client.pause(device_id=await command_device_id(client, device_id))
-        await refresh_and_publish(client, follow_up_delays=settings.command_followup_refresh_delays_for("pause"))
         await publish_mqtt_status(command_type="pause", command_ok=True)
+        await refresh_and_publish(client, follow_up_delays=settings.command_followup_refresh_delays_for("pause"))
     except Exception as exc:
         raise translate_spotify_error(exc) from exc
 
@@ -1126,8 +1126,8 @@ async def next_track(
     try:
         await client.next_track(device_id=explicit_device_id(device_id))
         broker.mark_forward_transition_expected()
-        await refresh_and_publish(client, follow_up_delays=settings.command_followup_refresh_delays_for("next"))
         await publish_mqtt_status(command_type="next", command_ok=True)
+        await refresh_and_publish(client, follow_up_delays=settings.command_followup_refresh_delays_for("next"))
     except Exception as exc:
         raise translate_spotify_error(exc) from exc
 
@@ -1139,8 +1139,8 @@ async def previous_track(
 ):
     try:
         await client.previous_track(device_id=explicit_device_id(device_id))
-        await refresh_and_publish(client, follow_up_delays=settings.command_followup_refresh_delays_for("previous"))
         await publish_mqtt_status(command_type="previous", command_ok=True)
+        await refresh_and_publish(client, follow_up_delays=settings.command_followup_refresh_delays_for("previous"))
     except Exception as exc:
         raise translate_spotify_error(exc) from exc
 

@@ -490,10 +490,12 @@ async def test_mqtt_play_pause_does_not_use_implicit_target_device(monkeypatch):
 @pytest.mark.asyncio
 async def test_rest_controls_use_command_specific_follow_up_profiles(monkeypatch):
     client = FakeCommandSpotifyClient()
+    events = []
     refreshes = []
     status_pulses = []
 
     async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
+        events.append(("refresh", tuple(follow_up_delays)))
         refreshes.append(tuple(follow_up_delays))
 
     async def fake_command_device_id(_client, device_id):
@@ -501,6 +503,7 @@ async def test_rest_controls_use_command_specific_follow_up_profiles(monkeypatch
 
     async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None):
         _ = (command_pending, command_ok)
+        events.append(("status", command_type, command_request_id))
         status_pulses.append((command_type, command_request_id))
 
     monkeypatch.setattr(main, "refresh_and_publish", fake_refresh_and_publish)
@@ -525,6 +528,16 @@ async def test_rest_controls_use_command_specific_follow_up_profiles(monkeypatch
         main.settings.command_followup_refresh_delays_for("previous"),
     ]
     assert status_pulses == [("play", None), ("pause", None), ("next", None), ("previous", None)]
+    assert events == [
+        ("status", "play", None),
+        ("refresh", main.settings.command_followup_refresh_delays_for("play")),
+        ("status", "pause", None),
+        ("refresh", main.settings.command_followup_refresh_delays_for("pause")),
+        ("status", "next", None),
+        ("refresh", main.settings.command_followup_refresh_delays_for("next")),
+        ("status", "previous", None),
+        ("refresh", main.settings.command_followup_refresh_delays_for("previous")),
+    ]
 
 
 @pytest.mark.asyncio
