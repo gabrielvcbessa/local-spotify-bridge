@@ -92,6 +92,14 @@ class SpotifyClient:
         return self._settings.spotify_refresh_token
 
     @property
+    def refresh_token_source(self) -> str:
+        if self._store is not None and self._store.get_refresh_token():
+            return "runtime"
+        if self._settings.spotify_refresh_token:
+            return "environment"
+        return "none"
+
+    @property
     def spotify_configured(self) -> bool:
         return bool(self._settings.spotify_auth_configured and self.refresh_token)
 

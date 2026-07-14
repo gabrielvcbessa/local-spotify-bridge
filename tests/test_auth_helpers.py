@@ -73,10 +73,13 @@ def test_disconnect_runtime_credentials_clears_store_and_access_token(tmp_path):
     client._access_token = "access"
     client._token_expires_at = 9999999999.0
 
+    assert client.refresh_token_source == "runtime"
+
     env_configured = client.disconnect_runtime_credentials()
 
     assert env_configured is False
     assert store.get_refresh_token() is None
+    assert client.refresh_token_source == "none"
     assert client._access_token is None
     assert client._token_expires_at == 0.0
     assert client.spotify_configured is False
@@ -95,10 +98,13 @@ def test_disconnect_runtime_credentials_reports_env_refresh_token(tmp_path):
         store=store,
     )
 
+    assert client.refresh_token_source == "runtime"
+
     env_configured = client.disconnect_runtime_credentials()
 
     assert env_configured is True
     assert store.get_refresh_token() is None
+    assert client.refresh_token_source == "environment"
     assert client.spotify_configured is True
 
 
@@ -108,6 +114,7 @@ async def test_auth_disconnect_publishes_status(monkeypatch):
 
     class FakeSpotify:
         spotify_configured = False
+        refresh_token_source = "none"
 
         def disconnect_runtime_credentials(self):
             return False
@@ -121,6 +128,7 @@ async def test_auth_disconnect_publishes_status(monkeypatch):
 
     assert response["persisted_refresh_token_cleared"] is True
     assert response["env_refresh_token_configured"] is False
+    assert response["spotify_refresh_token_source"] == "none"
     assert response["spotify_configured"] is False
     assert status_pulses == [("disconnect_spotify", None, None, True, None)]
 

@@ -200,6 +200,7 @@ async def health() -> dict[str, Any]:
         "ok": True,
         "spotify_configured": spotify.spotify_configured,
         "spotify_auth_configured": settings.spotify_auth_configured,
+        "spotify_refresh_token_source": spotify.refresh_token_source,
         "mqtt_enabled": settings.mqtt_enabled,
         "state_version": broker.version,
         "last_spotify_error": broker.last_spotify_error,
@@ -956,6 +957,7 @@ async def auth_disconnect(
         "message": message,
         "persisted_refresh_token_cleared": True,
         "env_refresh_token_configured": env_refresh_token_configured,
+        "spotify_refresh_token_source": client.refresh_token_source,
         "spotify_configured": client.spotify_configured,
     }
 

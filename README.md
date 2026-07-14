@@ -73,7 +73,8 @@ http://localhost:8090/v1/auth/login
 
 5. Copy `authorize_url` from the JSON response, open it in your browser, and approve Spotify access.
 6. Spotify redirects back to `/v1/auth/callback`; the bridge saves the returned `refresh_token`.
-7. `/health` should show `spotify_configured: true` without a restart.
+7. `/health` should show `spotify_configured: true` and
+   `spotify_refresh_token_source: runtime` without a restart.
 
 To disconnect a token paired through the runtime store without editing `.env`:
 
@@ -84,7 +85,8 @@ curl -X DELETE http://localhost:8090/v1/auth/token
 This clears the persisted refresh token and cached access token immediately. If
 `SPOTIFY_REFRESH_TOKEN` is still set in the environment, the response reports
 `env_refresh_token_configured: true` because that token will continue to configure the bridge until
-the environment is changed.
+the environment is changed. `/health.spotify_refresh_token_source` reports `runtime`,
+`environment`, or `none` so you can tell which token source is currently configuring Spotify.
 
 If port `8090` is busy, run with another host port and update the Spotify redirect URI to match:
 

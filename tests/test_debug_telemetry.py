@@ -113,6 +113,7 @@ def test_health_exposes_consumer_detection_and_current_polling_thresholds():
 
     assert response.status_code == 200
     payload = response.json()
+    assert payload["spotify_refresh_token_source"] in {"runtime", "environment", "none"}
     polling = payload["polling"]
     assert polling["mode"] in {"active", "idle"}
     assert isinstance(polling["active_consumers_detected"], bool)
