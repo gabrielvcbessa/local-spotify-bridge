@@ -3,6 +3,7 @@ from typing import Any
 from .art import ArtOptions
 from .context_cache import playback_context_parts
 from .knob_mqtt import envelope
+from .mqtt_commands import MQTT_READY_TARGET_GUARDED_COMMANDS
 from .models import PlaybackSnapshot
 
 
@@ -103,18 +104,7 @@ MQTT_KNOB_BACKEND_CAPABILITIES: dict[str, Any] = {
             ],
             "muted_or_zero_volume_field": True,
             "last_update_at_field": True,
-            "guarded_commands": [
-                "play_pause",
-                "play",
-                "pause",
-                "next",
-                "previous",
-                "seek",
-                "select_source",
-                "shuffle_set",
-                "repeat_set",
-                "play_library_item",
-            ],
+            "guarded_commands": list(MQTT_READY_TARGET_GUARDED_COMMANDS),
             "explicit_device_id_bypasses_target_gate": True,
             "volume_set_guard": "allowed_to_fix_zero_volume_target",
         },

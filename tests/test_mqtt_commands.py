@@ -1,6 +1,8 @@
 import pytest
 
 from app.mqtt_commands import (
+    MQTT_COMMAND_POLICIES,
+    MQTT_READY_TARGET_GUARDED_COMMANDS,
     mqtt_command_policy,
     play_library_item_body,
     playback_body_from_mqtt,
@@ -17,6 +19,14 @@ def test_mqtt_command_policy_marks_playback_followups():
     assert mqtt_command_policy("transfer").refresh_devices is True
     assert mqtt_command_policy("volume_set").follow_up_refresh is True
     assert mqtt_command_policy("unknown").follow_up_refresh is False
+
+
+def test_ready_target_guarded_commands_are_policy_backed():
+    assert "volume_set" not in MQTT_READY_TARGET_GUARDED_COMMANDS
+    assert "transfer" not in MQTT_READY_TARGET_GUARDED_COMMANDS
+    for command in MQTT_READY_TARGET_GUARDED_COMMANDS:
+        assert command in MQTT_COMMAND_POLICIES
+        assert mqtt_command_policy(command).playback_affecting is True
 
 
 def test_playback_body_from_mqtt_maps_play_fields():

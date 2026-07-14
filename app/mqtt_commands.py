@@ -26,6 +26,19 @@ MQTT_COMMAND_POLICIES: dict[str, MqttCommandPolicy] = {
     "play_library_item": MqttCommandPolicy(follow_up_refresh=True, playback_affecting=True),
 }
 
+MQTT_READY_TARGET_GUARDED_COMMANDS = (
+    "play_pause",
+    "play",
+    "pause",
+    "next",
+    "previous",
+    "seek",
+    "select_source",
+    "shuffle_set",
+    "repeat_set",
+    "play_library_item",
+)
+
 
 def mqtt_command_policy(command_type: str) -> MqttCommandPolicy:
     return MQTT_COMMAND_POLICIES.get(command_type, MqttCommandPolicy())

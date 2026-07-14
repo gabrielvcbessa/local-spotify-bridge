@@ -8,6 +8,7 @@ from app.mqtt_contract import (
     mqtt_control_state_payload,
     mqtt_knob_config_payload,
 )
+from app.mqtt_commands import MQTT_READY_TARGET_GUARDED_COMMANDS
 
 
 def test_mqtt_knob_config_payload_advertises_protocol_and_topics():
@@ -74,18 +75,7 @@ def test_mqtt_knob_config_payload_advertises_protocol_and_topics():
     assert "volume_unavailable" in readiness_contract["risk_taxonomy"]
     assert readiness_contract["muted_or_zero_volume_field"] is True
     assert readiness_contract["last_update_at_field"] is True
-    assert readiness_contract["guarded_commands"] == [
-        "play_pause",
-        "play",
-        "pause",
-        "next",
-        "previous",
-        "seek",
-        "select_source",
-        "shuffle_set",
-        "repeat_set",
-        "play_library_item",
-    ]
+    assert readiness_contract["guarded_commands"] == list(MQTT_READY_TARGET_GUARDED_COMMANDS)
     assert readiness_contract["explicit_device_id_bypasses_target_gate"] is True
     assert readiness_contract["volume_set_guard"] == "allowed_to_fix_zero_volume_target"
     assert "status_command_ok" in payload["protocol"]["features"]
