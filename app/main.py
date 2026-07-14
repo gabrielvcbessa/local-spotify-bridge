@@ -2503,13 +2503,21 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
             spotify,
             follow_up_delays=settings.command_followup_refresh_delays_for(command_type) if command_policy.follow_up_refresh else (),
         )
-        return {
+        result = {
             "state_version": broker.version,
             "published_state": published_state,
             "state_refresh_ok": published_state,
             "state_publish_forced": True,
             "playback_affecting": command_policy.playback_affecting,
         }
+        await publish_mqtt_status(
+            command_type=command_type,
+            command_request_id=request_id,
+            command_pending=False,
+            command_ok=True,
+            command_metadata=result,
+        )
+        return result
     except Exception as exc:
         await publish_mqtt_status(
             command_type=command_type,

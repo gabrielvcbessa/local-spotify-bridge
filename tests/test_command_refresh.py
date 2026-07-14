@@ -362,9 +362,12 @@ async def test_mqtt_next_previous_do_not_use_implicit_target_device(monkeypatch)
     assert status_pulses == [
         ("next", "knob-next-1", True, None),
         ("next", "knob-next-1", False, True),
+        ("next", "knob-next-1", False, True),
         ("previous", "knob-prev-1", True, None),
         ("previous", "knob-prev-1", False, True),
+        ("previous", "knob-prev-1", False, True),
         ("next", None, True, None),
+        ("next", None, False, True),
         ("next", None, False, True),
     ]
 
@@ -404,12 +407,17 @@ async def test_mqtt_transfer_refreshes_devices_and_state(monkeypatch):
     assert client.calls == [("transfer", "speaker-1")]
     assert device_refreshes == [True]
     assert refreshes == [main.settings.command_followup_refresh_delays_for("transfer")]
-    assert status_pulses == [("transfer", "knob-transfer-1", True, None), ("transfer", "knob-transfer-1", False, True)]
+    assert status_pulses == [
+        ("transfer", "knob-transfer-1", True, None),
+        ("transfer", "knob-transfer-1", False, True),
+        ("transfer", "knob-transfer-1", False, True),
+    ]
     assert events == [
         ("status", "transfer", "knob-transfer-1", True, None),
         ("status", "transfer", "knob-transfer-1", False, True),
         ("devices", client),
         ("refresh", main.settings.command_followup_refresh_delays_for("transfer"), True),
+        ("status", "transfer", "knob-transfer-1", False, True),
     ]
 
 
@@ -449,6 +457,7 @@ async def test_mqtt_transfer_success_survives_device_refresh_failure(monkeypatch
     assert status_pulses == [
         ("transfer", "knob-transfer-device-refresh-fail", True, None),
         ("transfer", "knob-transfer-device-refresh-fail", False, True),
+        ("transfer", "knob-transfer-device-refresh-fail", False, True),
     ]
 
 
@@ -462,7 +471,7 @@ async def test_mqtt_command_success_status_publishes_before_state_refresh(monkey
         return True
 
     async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None, command_metadata=None):
-        events.append(("status", command_type, command_request_id, command_pending, command_ok))
+        events.append(("status", command_type, command_request_id, command_pending, command_ok, command_metadata))
 
     monkeypatch.setattr(main, "spotify", client)
     monkeypatch.setattr(main, "refresh_and_publish", fake_refresh_and_publish)
@@ -471,9 +480,23 @@ async def test_mqtt_command_success_status_publishes_before_state_refresh(monkey
     await main.handle_mqtt_command({"request_id": "knob-next-ack", "type": "next"})
 
     assert events == [
-        ("status", "next", "knob-next-ack", True, None),
-        ("status", "next", "knob-next-ack", False, True),
+        ("status", "next", "knob-next-ack", True, None, None),
+        ("status", "next", "knob-next-ack", False, True, {"playback_affecting": True}),
         ("refresh", main.settings.command_followup_refresh_delays_for("next"), True),
+        (
+            "status",
+            "next",
+            "knob-next-ack",
+            False,
+            True,
+            {
+                "state_version": main.broker.version,
+                "published_state": True,
+                "state_refresh_ok": True,
+                "state_publish_forced": True,
+                "playback_affecting": True,
+            },
+        ),
     ]
 
 
@@ -527,11 +550,15 @@ async def test_mqtt_fast_controls_use_command_follow_up_profiles(monkeypatch):
     assert status_pulses == [
         ("volume_set", "knob-volume-1", True, None),
         ("volume_set", "knob-volume-1", False, True),
+        ("volume_set", "knob-volume-1", False, True),
         ("seek", "knob-seek-1", True, None),
+        ("seek", "knob-seek-1", False, True),
         ("seek", "knob-seek-1", False, True),
         ("shuffle_set", "knob-shuffle-1", True, None),
         ("shuffle_set", "knob-shuffle-1", False, True),
+        ("shuffle_set", "knob-shuffle-1", False, True),
         ("repeat_set", "knob-repeat-1", True, None),
+        ("repeat_set", "knob-repeat-1", False, True),
         ("repeat_set", "knob-repeat-1", False, True),
     ]
 
@@ -601,6 +628,7 @@ async def test_mqtt_command_success_survives_refresh_failure(monkeypatch):
     assert status_pulses == [
         ("next", "knob-next-refresh-fail", True, None),
         ("next", "knob-next-refresh-fail", False, True),
+        ("next", "knob-next-refresh-fail", False, True),
     ]
 
 
@@ -633,6 +661,7 @@ async def test_mqtt_save_track_uses_payload_track_uri_and_publishes_status(monke
     assert status_pulses == [
         ("save_current_track", "knob-like-1", True, None),
         ("save_current_track", "knob-like-1", False, True),
+        ("save_current_track", "knob-like-1", False, True),
     ]
 
 
@@ -663,6 +692,7 @@ async def test_mqtt_unsave_track_falls_back_to_current_state(monkeypatch):
     assert status_pulses == [
         ("unsave_current_track", "knob-unlike-1", True, None),
         ("unsave_current_track", "knob-unlike-1", False, True),
+        ("unsave_current_track", "knob-unlike-1", False, True),
     ]
 
 
@@ -674,6 +704,7 @@ async def test_mqtt_play_pause_does_not_use_implicit_target_device(monkeypatch):
 
     async def fake_refresh_and_publish(_client, *, follow_up_delays=(), force_publish=False):
         refreshes.append((tuple(follow_up_delays), force_publish))
+        return True
 
     async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None, command_metadata=None):
         _ = command_error
@@ -709,12 +740,64 @@ async def test_mqtt_play_pause_does_not_use_implicit_target_device(monkeypatch):
     assert status_pulses == [
         ("play_pause", None, True, None, None),
         ("play_pause", None, False, True, {"playback_affecting": True}),
+        (
+            "play_pause",
+            None,
+            False,
+            True,
+            {
+                "state_version": main.broker.version,
+                "published_state": True,
+                "state_refresh_ok": True,
+                "state_publish_forced": True,
+                "playback_affecting": True,
+            },
+        ),
         ("play_pause", None, True, None, None),
         ("play_pause", None, False, True, {"playback_affecting": True}),
+        (
+            "play_pause",
+            None,
+            False,
+            True,
+            {
+                "state_version": main.broker.version,
+                "published_state": True,
+                "state_refresh_ok": True,
+                "state_publish_forced": True,
+                "playback_affecting": True,
+            },
+        ),
         ("play", "knob-play-1", True, None, None),
         ("play", "knob-play-1", False, True, {"playback_affecting": True}),
+        (
+            "play",
+            "knob-play-1",
+            False,
+            True,
+            {
+                "state_version": main.broker.version,
+                "published_state": True,
+                "state_refresh_ok": True,
+                "state_publish_forced": True,
+                "playback_affecting": True,
+            },
+        ),
         ("pause", None, True, None, None),
         ("pause", None, False, True, {"playback_affecting": True}),
+        (
+            "pause",
+            None,
+            False,
+            True,
+            {
+                "state_version": main.broker.version,
+                "published_state": True,
+                "state_refresh_ok": True,
+                "state_publish_forced": True,
+                "playback_affecting": True,
+            },
+        ),
     ]
 
 
