@@ -1356,6 +1356,35 @@ def test_mqtt_status_payload_uses_cached_target_readiness(monkeypatch):
     assert "refresh_token" not in payload["direct_spotify"]
 
 
+def test_mqtt_status_payload_uses_active_playback_when_configured_target_is_stale(monkeypatch):
+    previous_cached = main.cached_devices
+    previous_target = main.store.get_target_device()
+    previous_state = main.broker.current_state
+    previous_spotify = main.spotify
+    main.cached_devices = [
+        {"id": "speaker-1", "name": "Speaker 1", "is_active": True, "supports_volume": True, "volume_percent": 40},
+        {"id": "speaker-2", "name": "Speaker 2", "is_active": False, "supports_volume": True, "volume_percent": 40},
+    ]
+    main.broker.current_state = PlaybackSnapshot(is_playing=True, device_id="speaker-1")
+    monkeypatch.setattr(main, "spotify", FakeCommandSpotifyClient())
+    monkeypatch.setattr(main.store, "get_target_device", lambda: main.TargetDevice(device_id="speaker-2"))
+    try:
+        payload = main.mqtt_status_payload()
+    finally:
+        main.cached_devices = previous_cached
+        main.broker.current_state = previous_state
+        monkeypatch.setattr(main, "spotify", previous_spotify)
+        monkeypatch.setattr(main.store, "get_target_device", lambda: previous_target)
+
+    assert payload["status"] == "ready"
+    assert payload["target"]["device_id"] == "speaker-1"
+    assert payload["target"]["resolved"] is True
+    assert payload["target_readiness"]["source"] == "active_playback_fallback"
+    assert payload["target_readiness"]["configured_target"] == {"device_id": "speaker-2", "device_name": None}
+    assert payload["target_readiness"]["resolved_device_id"] == "speaker-1"
+    assert payload["target_readiness"]["ready_for_live_control"] is True
+
+
 def test_target_device_readiness_reports_zero_volume_risk():
     readiness = main.target_device_readiness_from_devices(
         main.TargetDevice(device_id="speaker-1"),
@@ -1533,6 +1562,50 @@ async def test_mqtt_next_refuses_configured_target_that_is_not_ready(monkeypatch
             "next target is not ready for live control: inactive_device,volume_unavailable",
         ),
     ]
+
+
+@pytest.mark.asyncio
+async def test_mqtt_next_uses_active_playback_when_configured_target_is_only_inactive(monkeypatch):
+    client = FakeCommandSpotifyClient()
+    client.device_items = [
+        {"id": "speaker-1", "name": "Speaker 1", "is_active": True, "supports_volume": True, "volume_percent": 40},
+        {"id": "speaker-2", "name": "Speaker 2", "is_active": False, "supports_volume": True, "volume_percent": 40},
+    ]
+    refreshes = []
+    status_pulses = []
+    stored_targets = []
+
+    async def fake_refresh_after_successful_command(_client, *, follow_up_delays=()):
+        refreshes.append(tuple(follow_up_delays))
+        return True
+
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None, command_metadata=None):
+        status_pulses.append((command_type, command_request_id, command_pending, command_ok, command_error, command_metadata))
+
+    monkeypatch.setattr(main, "spotify", client)
+    monkeypatch.setattr(main.store, "get_target_device", lambda: main.TargetDevice(device_id="speaker-2"))
+    monkeypatch.setattr(main.store, "set_target_device", lambda target: stored_targets.append(target))
+    monkeypatch.setattr(main, "refresh_after_successful_command", fake_refresh_after_successful_command)
+    monkeypatch.setattr(main, "publish_mqtt_status", fake_publish_mqtt_status)
+
+    result = await main.handle_mqtt_command({"request_id": "knob-next-fallback", "type": "next"})
+
+    assert client.calls == [("next", "speaker-1")]
+    assert stored_targets == [main.TargetDevice(device_id="speaker-1", device_name="Speaker 1")]
+    assert refreshes == [main.settings.command_followup_refresh_delays_for("next")]
+    assert result["published_state"] is True
+    assert result["queue_status_published"] is True
+    assert status_pulses[0] == ("next", "knob-next-fallback", True, None, None, None)
+    assert status_pulses[1] == (
+        "next",
+        "knob-next-fallback",
+        False,
+        True,
+        None,
+        {"playback_affecting": True, "expected_playing": True},
+    )
+    assert status_pulses[-1][3] is True
+    assert status_pulses[-1][5]["queue_status_published"] is True
 
 
 @pytest.mark.asyncio

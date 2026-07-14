@@ -1270,10 +1270,7 @@ async def verified_live_control_device_id(
     target = store.get_target_device()
     if target is None:
         return None
-    readiness = await target_device_readiness(client, target, refresh=True)
-    if not readiness.get("ready_for_live_control", False):
-        raise TargetNotReadyForLiveControl(command_type, readiness)
-    return explicit_device_id(readiness.get("resolved_device_id"))
+    return await effective_live_control_device_id(client, target, command_type=command_type)
 
 
 async def rest_live_control_device_id(
@@ -2113,17 +2110,26 @@ def mqtt_status_payload(
                 if key in command_metadata:
                     command_pulse[key] = command_metadata[key]
     spotify_configured = bool(getattr(spotify, "spotify_configured", False))
+    target = store.get_target_device()
+    target_readiness = effective_cached_target_readiness(target)
+    status_target = target
+    if target_readiness.get("source") == "active_playback_fallback":
+        device = target_readiness.get("device") if isinstance(target_readiness.get("device"), dict) else {}
+        resolved_device_id = explicit_device_id(target_readiness.get("resolved_device_id"))
+        if resolved_device_id:
+            device_name = device.get("name") if isinstance(device.get("name"), str) else None
+            status_target = TargetDevice(device_id=resolved_device_id, device_name=device_name)
     return status_payload(
         version=broker.version,
         spotify_configured=spotify_configured,
         last_poll_at=broker.last_poll_at,
         last_error=broker.last_spotify_error,
         current_state=broker.current_state,
-        target=store.get_target_device(),
+        target=status_target,
         mqtt_connected=settings.mqtt_enabled,
         command_pending=bool(broker.pending_mqtt_command) if command_pending is None else command_pending,
         command_pulse=command_pulse,
-        target_readiness=cached_target_readiness(store.get_target_device()),
+        target_readiness=target_readiness,
         direct_spotify=direct_spotify_status(spotify),
     )
 
@@ -2189,6 +2195,13 @@ def active_device_id(devices: list[dict[str, Any]]) -> str | None:
         if device.get("is_active"):
             device_id = device.get("id")
             return device_id if isinstance(device_id, str) else None
+    return None
+
+
+def active_device_from_list(devices: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for device in devices:
+        if device.get("is_active"):
+            return device
     return None
 
 
@@ -2299,6 +2312,40 @@ def cached_target_readiness(target: TargetDevice | None) -> dict[str, Any]:
     )
 
 
+def active_playback_fallback_readiness(
+    target: TargetDevice | None,
+    devices: list[dict[str, Any]] | None,
+    *,
+    checked_at: str,
+) -> dict[str, Any] | None:
+    if target is None or devices is None:
+        return None
+    target_readiness = target_device_readiness_from_devices(target, devices, checked_at=checked_at)
+    risks = target_readiness.get("risks", [])
+    if risks != ["inactive_device"]:
+        return None
+    active_device = active_device_from_list(devices)
+    active_id = active_device.get("id") if isinstance(active_device, dict) else None
+    if not isinstance(active_id, str) or not active_id:
+        return None
+    if active_device.get("is_restricted") or not active_device.get("supports_volume") or active_device.get("volume_percent") == 0:
+        return None
+    fallback_target = TargetDevice(device_id=active_id, device_name=active_device.get("name") if isinstance(active_device.get("name"), str) else None)
+    readiness = target_device_readiness_from_devices(fallback_target, devices, checked_at=checked_at)
+    readiness["source"] = "active_playback_fallback"
+    readiness["configured_target"] = target.model_dump(mode="json")
+    readiness["fallback_reason"] = "configured_target_inactive"
+    return readiness
+
+
+def effective_cached_target_readiness(target: TargetDevice | None) -> dict[str, Any]:
+    checked_at = datetime.now(UTC).isoformat()
+    fallback = active_playback_fallback_readiness(target, cached_devices, checked_at=checked_at)
+    if fallback is not None:
+        return fallback
+    return target_device_readiness_from_devices(target, cached_devices, checked_at=checked_at)
+
+
 async def target_device_readiness(
     client: SpotifyClient,
     target: TargetDevice | None,
@@ -2308,6 +2355,23 @@ async def target_device_readiness(
     checked_at = datetime.now(UTC).isoformat()
     devices = await current_devices(client, refresh=refresh)
     return target_device_readiness_from_devices(target, devices, checked_at=checked_at)
+
+
+async def effective_live_control_device_id(client: SpotifyClient, target: TargetDevice, *, command_type: str) -> str | None:
+    checked_at = datetime.now(UTC).isoformat()
+    devices = await current_devices(client, refresh=True)
+    readiness = target_device_readiness_from_devices(target, devices, checked_at=checked_at)
+    if readiness.get("ready_for_live_control", False):
+        return explicit_device_id(readiness.get("resolved_device_id"))
+    fallback = active_playback_fallback_readiness(target, devices, checked_at=checked_at)
+    if fallback is None or not fallback.get("ready_for_live_control", False):
+        raise TargetNotReadyForLiveControl(command_type, readiness)
+    resolved_device_id = explicit_device_id(fallback.get("resolved_device_id"))
+    if resolved_device_id:
+        device = fallback.get("device") if isinstance(fallback.get("device"), dict) else {}
+        device_name = device.get("name") if isinstance(device.get("name"), str) else None
+        store.set_target_device(TargetDevice(device_id=resolved_device_id, device_name=device_name))
+    return resolved_device_id
 
 
 async def build_library_root_payload(client: SpotifyClient) -> dict[str, Any]:
