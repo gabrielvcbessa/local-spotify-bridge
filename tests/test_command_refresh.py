@@ -395,6 +395,36 @@ async def test_mqtt_command_success_status_publishes_before_state_refresh(monkey
 
 
 @pytest.mark.asyncio
+async def test_mqtt_command_success_survives_refresh_failure(monkeypatch):
+    client = FakeCommandSpotifyClient()
+    status_pulses = []
+    previous_error = main.broker.last_spotify_error
+
+    async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
+        raise RuntimeError("refresh unavailable")
+
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None):
+        status_pulses.append((command_type, command_request_id, command_pending, command_ok))
+
+    monkeypatch.setattr(main, "spotify", client)
+    monkeypatch.setattr(main, "refresh_and_publish", fake_refresh_and_publish)
+    monkeypatch.setattr(main, "publish_mqtt_status", fake_publish_mqtt_status)
+
+    try:
+        result = await main.handle_mqtt_command({"request_id": "knob-next-refresh-fail", "type": "next"})
+        assert main.broker.last_spotify_error == "refresh unavailable"
+    finally:
+        main.broker.last_spotify_error = previous_error
+
+    assert result["published_state"] is True
+    assert result["playback_affecting"] is True
+    assert status_pulses == [
+        ("next", "knob-next-refresh-fail", True, None),
+        ("next", "knob-next-refresh-fail", False, True),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_mqtt_save_track_uses_payload_track_uri_and_publishes_status(monkeypatch):
     client = FakeCommandSpotifyClient()
     refreshes = []
@@ -575,6 +605,35 @@ async def test_rest_seek_and_volume_publish_status_before_refresh(monkeypatch):
         ("status", "volume_set", True),
         ("refresh", ()),
     ]
+
+
+@pytest.mark.asyncio
+async def test_rest_control_success_survives_refresh_failure(monkeypatch):
+    client = FakeCommandSpotifyClient()
+    status_pulses = []
+    previous_error = main.broker.last_spotify_error
+
+    async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
+        raise RuntimeError("rest refresh unavailable")
+
+    async def fake_command_device_id(_client, device_id):
+        return device_id
+
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None):
+        status_pulses.append((command_type, command_request_id, command_pending, command_ok))
+
+    monkeypatch.setattr(main, "refresh_and_publish", fake_refresh_and_publish)
+    monkeypatch.setattr(main, "command_device_id", fake_command_device_id)
+    monkeypatch.setattr(main, "publish_mqtt_status", fake_publish_mqtt_status)
+
+    try:
+        await main.play(PlaybackCommand(device_id="speaker-1"), client=client)
+        assert main.broker.last_spotify_error == "rest refresh unavailable"
+    finally:
+        main.broker.last_spotify_error = previous_error
+
+    assert client.calls == [("play", "speaker-1")]
+    assert status_pulses == [("play", None, None, True)]
 
 
 @pytest.mark.asyncio
