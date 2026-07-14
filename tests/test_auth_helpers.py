@@ -26,6 +26,19 @@ def test_authorize_url_contains_redirect_and_scopes():
     assert "state=state-1" in url
 
 
+def test_required_feature_scopes_are_appended_to_stale_env_scope_list():
+    settings = Settings(
+        SPOTIFY_SCOPES=(
+            "user-read-playback-state user-modify-playback-state "
+            "playlist-read-private playlist-read-collaborative user-library-read"
+        )
+    )
+
+    assert settings.spotify_scope_list[-1] == "user-library-modify"
+    assert settings.spotify_scope_list.count("user-library-read") == 1
+    assert settings.spotify_scope_list.count("user-library-modify") == 1
+
+
 @pytest.mark.anyio
 async def test_exchange_code_returns_refresh_token():
     async def handler(request: httpx.Request) -> httpx.Response:

@@ -4,6 +4,9 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+REQUIRED_SPOTIFY_FEATURE_SCOPES = ("user-library-read", "user-library-modify")
+
+
 class Settings(BaseSettings):
     spotify_client_id: str = Field(default="", alias="SPOTIFY_CLIENT_ID")
     spotify_client_secret: str = Field(default="", alias="SPOTIFY_CLIENT_SECRET")
@@ -113,7 +116,11 @@ class Settings(BaseSettings):
 
     @property
     def spotify_scope_list(self) -> list[str]:
-        return [scope for scope in self.spotify_scopes.split() if scope]
+        scopes = [scope for scope in self.spotify_scopes.split() if scope]
+        for scope in REQUIRED_SPOTIFY_FEATURE_SCOPES:
+            if scope not in scopes:
+                scopes.append(scope)
+        return scopes
 
     @property
     def command_followup_refresh_delays(self) -> tuple[float, ...]:

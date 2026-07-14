@@ -13,7 +13,7 @@ from PIL import Image
 
 from .art import ArtCache, ArtOptions, art_version, bytes_hash, color_bar_test_pattern_rgb565, display_ready_rgb565, image_to_rgb565
 from .broker import ConnectionBroker, PeriodicPoller, StatePoller
-from .config import get_settings
+from .config import REQUIRED_SPOTIFY_FEATURE_SCOPES, get_settings
 from .context_cache import PlaylistNameCache, playback_context_parts, schedule_playlist_resolve
 from .knob import knob_snapshot
 from .knob_mqtt import devices_payload, envelope, library_item_payload, library_page_payload, library_root_payload, status_payload
@@ -190,7 +190,7 @@ def direct_spotify_status(client: SpotifyClient | None = None) -> dict[str, Any]
     client = client or spotify
     token_source = getattr(client, "refresh_token_source", "none")
     requested_scopes = settings.spotify_scope_list
-    required_feature_scopes = ["user-library-read", "user-library-modify"]
+    required_feature_scopes = list(REQUIRED_SPOTIFY_FEATURE_SCOPES)
     return {
         "transport": "spotify_web_api",
         "pairing_supported": settings.spotify_auth_configured,
