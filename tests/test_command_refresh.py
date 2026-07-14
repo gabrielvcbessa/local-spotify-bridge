@@ -326,16 +326,20 @@ async def test_mqtt_transfer_refreshes_devices_and_state(monkeypatch):
     client = FakeCommandSpotifyClient()
     refreshes = []
     device_refreshes = []
+    events = []
     status_pulses = []
 
     async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
+        events.append(("refresh", tuple(follow_up_delays)))
         refreshes.append(tuple(follow_up_delays))
 
     async def fake_refresh_devices_and_publish(_client):
+        events.append(("devices", _client))
         device_refreshes.append(True)
         return {"items": []}
 
     async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None):
+        events.append(("status", command_type, command_request_id, command_pending, command_ok))
         status_pulses.append((command_type, command_request_id, command_pending, command_ok))
 
     monkeypatch.setattr(main, "spotify", client)
@@ -352,6 +356,12 @@ async def test_mqtt_transfer_refreshes_devices_and_state(monkeypatch):
     assert device_refreshes == [True]
     assert refreshes == [main.settings.command_followup_refresh_delays_for("transfer")]
     assert status_pulses == [("transfer", "knob-transfer-1", True, None), ("transfer", "knob-transfer-1", False, True)]
+    assert events == [
+        ("status", "transfer", "knob-transfer-1", True, None),
+        ("status", "transfer", "knob-transfer-1", False, True),
+        ("devices", client),
+        ("refresh", main.settings.command_followup_refresh_delays_for("transfer")),
+    ]
 
 
 @pytest.mark.asyncio
@@ -520,15 +530,18 @@ async def test_rest_controls_use_command_specific_follow_up_profiles(monkeypatch
 @pytest.mark.asyncio
 async def test_rest_transfer_paths_use_transfer_follow_up_profile(monkeypatch):
     client = FakeCommandSpotifyClient()
+    events = []
     refreshes = []
     device_refreshes = []
     targets = []
     status_pulses = []
 
     async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
+        events.append(("refresh", tuple(follow_up_delays)))
         refreshes.append(tuple(follow_up_delays))
 
     async def fake_refresh_devices_and_publish(_client):
+        events.append(("devices", _client))
         device_refreshes.append(_client)
         return {"items": []}
 
@@ -537,13 +550,14 @@ async def test_rest_transfer_paths_use_transfer_follow_up_profile(monkeypatch):
 
     async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None):
         _ = (command_pending, command_ok)
+        events.append(("status", command_type, command_request_id))
         status_pulses.append((command_type, command_request_id))
 
     monkeypatch.setattr(main, "refresh_and_publish", fake_refresh_and_publish)
     monkeypatch.setattr(main, "refresh_devices_and_publish", fake_refresh_devices_and_publish)
     monkeypatch.setattr(client, "spotify_configured", True, raising=False)
     monkeypatch.setattr(client, "resolve_target_device_id", fake_resolve_target_device_id, raising=False)
-    monkeypatch.setattr(main.store, "set_target_device", lambda target: targets.append(target))
+    monkeypatch.setattr(main.store, "set_target_device", lambda target: (targets.append(target), events.append(("target", target))))
     monkeypatch.setattr(main, "publish_mqtt_status", fake_publish_mqtt_status)
 
     await main.set_target(
@@ -563,6 +577,16 @@ async def test_rest_transfer_paths_use_transfer_follow_up_profile(monkeypatch):
     ]
     assert device_refreshes == [client, client]
     assert status_pulses == [("transfer", None), ("transfer", None)]
+    assert events == [
+        ("target", main.TargetDevice(device_id="speaker-1", device_name=None)),
+        ("status", "transfer", None),
+        ("refresh", main.settings.command_followup_refresh_delays_for("transfer")),
+        ("devices", client),
+        ("target", main.TargetDevice(device_id="speaker-2", device_name=None)),
+        ("status", "transfer", None),
+        ("refresh", main.settings.command_followup_refresh_delays_for("transfer")),
+        ("devices", client),
+    ]
 
 
 @pytest.mark.asyncio

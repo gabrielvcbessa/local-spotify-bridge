@@ -1044,6 +1044,7 @@ async def set_target(
     target = TargetDevice(device_id=command.device_id, device_name=command.device_name)
     resolved_device_id = command.device_id
     readiness: dict[str, Any] | None = None
+    transfer_succeeded = False
     try:
         if client.spotify_configured:
             readiness = await target_device_readiness(client, target, refresh=True)
@@ -1056,18 +1057,25 @@ async def set_target(
             raise HTTPException(status_code=409, detail={"message": "Target device is not safe for live control.", "readiness": readiness})
         if command.transfer_playback and resolved_device_id:
             await client.transfer_playback(resolved_device_id, command.play)
+            transfer_succeeded = True
+    except Exception as exc:
+        raise translate_spotify_error(exc) from exc
+
+    state_store.set_target_device(target)
+    try:
+        if transfer_succeeded:
+            await publish_mqtt_status(command_type="transfer", command_ok=True)
             await refresh_and_publish(
                 client,
                 follow_up_delays=settings.command_followup_refresh_delays_for("transfer"),
             )
             await refresh_devices_and_publish(client)
+        else:
+            if client.spotify_configured:
+                await refresh_devices_and_publish(client)
+            await publish_mqtt_status(command_type="set_target", command_ok=True)
     except Exception as exc:
         raise translate_spotify_error(exc) from exc
-
-    state_store.set_target_device(target)
-    if client.spotify_configured and not command.transfer_playback:
-        await refresh_devices_and_publish(client)
-    await publish_mqtt_status(command_type="transfer" if command.transfer_playback else "set_target", command_ok=True)
     return {
         "target": target.model_dump(mode="json"),
         "resolved_device_id": resolved_device_id,
@@ -1148,9 +1156,9 @@ async def transfer_playback(
             raise HTTPException(status_code=409, detail={"message": "Target device is not safe for live control.", "readiness": readiness})
         await client.transfer_playback(command.device_id, command.play)
         store.set_target_device(TargetDevice(device_id=command.device_id))
+        await publish_mqtt_status(command_type="transfer", command_ok=True)
         await refresh_and_publish(client, follow_up_delays=settings.command_followup_refresh_delays_for("transfer"))
         await refresh_devices_and_publish(client)
-        await publish_mqtt_status(command_type="transfer", command_ok=True)
     except HTTPException:
         raise
     except Exception as exc:
@@ -2163,7 +2171,6 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
             await spotify.transfer_playback(device_id, bool(play))
             if command.get("set_target"):
                 store.set_target_device(TargetDevice(device_id=device_id))
-            await refresh_devices_and_publish(spotify)
         elif command_type == "shuffle_set":
             enabled = command.get("enabled")
             if not isinstance(enabled, bool):
@@ -2190,6 +2197,8 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
             command_pending=False,
             command_ok=True,
         )
+        if command_policy.refresh_devices:
+            await refresh_devices_and_publish(spotify)
         await refresh_and_publish(
             spotify,
             follow_up_delays=settings.command_followup_refresh_delays_for(command_type) if command_policy.follow_up_refresh else (),
