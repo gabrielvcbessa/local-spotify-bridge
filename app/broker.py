@@ -338,7 +338,7 @@ class ConnectionBroker:
             self.clear_forward_transition_expected()
         self.current_state = new_state
         self._version += 1
-        await self.publish("playback.changed" if changed else "playback.refreshed", new_state)
+        await self.publish("playback.changed" if changed else "playback.refreshed", new_state, force_mqtt=force)
         return True
 
     def mark_forward_transition_expected(self, ttl_seconds: float = 12.0) -> None:
@@ -368,7 +368,7 @@ class ConnectionBroker:
         self.last_poll_at = datetime.now(UTC).isoformat()
         self.last_spotify_error = str(exc)
 
-    async def publish(self, event: str, state: PlaybackSnapshot | None) -> None:
+    async def publish(self, event: str, state: PlaybackSnapshot | None, *, force_mqtt: bool = False) -> None:
         envelope = StateEnvelope(event=event, state=state, version=self._version)
         payload = envelope.model_dump(mode="json")
         text = json.dumps(payload)
@@ -390,13 +390,14 @@ class ConnectionBroker:
 
         if self._mqtt_client is not None:
             topic = f"{self._settings.mqtt_topic_prefix}/playback"
-            self._publish_mqtt_json(topic, payload, retain=True)
+            self._publish_mqtt_json(topic, payload, retain=True, force=force_mqtt)
             if self._mqtt_snapshot_factory is not None:
                 snapshot = await self._mqtt_snapshot_factory(self._version, state)
                 self._publish_mqtt_json(
                     self.mqtt_topic("state"),
                     retain=True,
                     payload=snapshot,
+                    force=force_mqtt,
                 )
 
     async def publish_mqtt_config(self) -> None:
@@ -558,7 +559,7 @@ class ConnectionBroker:
             return
         self._publish_mqtt_bytes(self.mqtt_topic(topic_key), payload, retain=True)
 
-    def _publish_mqtt_json(self, topic: str, payload: dict[str, Any], *, retain: bool) -> bool:
+    def _publish_mqtt_json(self, topic: str, payload: dict[str, Any], *, retain: bool, force: bool = False) -> bool:
         if self._mqtt_client is None:
             return False
 
@@ -566,7 +567,7 @@ class ConnectionBroker:
         payload_bytes = len(text.encode())
         if retain:
             fingerprint = mqtt_payload_fingerprint(payload)
-            if self._mqtt_payload_fingerprints.get(topic) == fingerprint:
+            if not force and self._mqtt_payload_fingerprints.get(topic) == fingerprint:
                 self._remember_retained_payload(
                     topic=topic,
                     payload_kind="json",

@@ -78,14 +78,20 @@ async def test_forced_publish_republishes_unchanged_mqtt_snapshot():
 
     changed = await broker.publish_if_changed(state)
     forced = await broker.publish_if_changed(state, force=True)
+    forced_again = await broker.publish_if_changed(state, force=True)
 
     assert changed is False
     assert forced is True
-    assert broker.version == 1
+    assert forced_again is True
+    assert broker.version == 2
     assert mqtt.published[0][0] == "local-spotify-bridge/playback"
     assert json.loads(mqtt.published[0][1])["event"] == "playback.refreshed"
     assert mqtt.published[1][0] == "rotary/kitchen/state"
     assert json.loads(mqtt.published[1][1]) == {"version": 1, "state_title": "Song"}
+    assert mqtt.published[2][0] == "local-spotify-bridge/playback"
+    assert json.loads(mqtt.published[2][1])["event"] == "playback.refreshed"
+    assert mqtt.published[3][0] == "rotary/kitchen/state"
+    assert json.loads(mqtt.published[3][1]) == {"version": 2, "state_title": "Song"}
 
 
 @pytest.mark.anyio
