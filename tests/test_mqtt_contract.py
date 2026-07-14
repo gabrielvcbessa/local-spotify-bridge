@@ -48,6 +48,7 @@ def test_mqtt_knob_config_payload_advertises_protocol_and_topics():
     assert payload["capabilities"]["transport"] == "spotify_web_api"
     assert payload["capabilities"]["devices"]["readiness"] is True
     assert "status_command_ok" in payload["protocol"]["features"]
+    assert "status_command_error" in payload["protocol"]["features"]
     assert "target_ready" in payload["capabilities"]["runtime_states"]
     assert "save_current_track" in MQTT_KNOB_COMMANDS
     assert "unsave_current_track" in MQTT_KNOB_COMMANDS

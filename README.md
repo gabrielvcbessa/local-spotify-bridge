@@ -606,10 +606,11 @@ flags, plus cached `target_readiness` when the bridge has a recent devices list.
 distinguish unresolved, restricted, inactive, and no-volume targets without making another request.
 Successful REST control and target-device changes also stamp a `last_command` pulse into `status`,
 forcing a retained status update even if Spotify's playback state has not settled into a new
-snapshot yet. Successful pulses include `ok:true`; failed MQTT command pulses include `ok:false`.
-MQTT commands include the original `request_id` in that pulse when one was supplied, so clients can
-use retained status as a backup positive acknowledgement if they miss the non-retained
-`command_result` and `runtime.command_pending` is false.
+snapshot yet. Successful pulses include `ok:true`; failed MQTT command pulses include `ok:false` and
+an `error` string when the bridge has a concrete failure reason. MQTT commands include the original
+`request_id` in that pulse when one was supplied, so clients can use retained status as a backup
+acknowledgement if they miss the non-retained `command_result` and `runtime.command_pending` is
+false.
 
 MQTT command examples:
 
