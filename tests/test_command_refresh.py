@@ -1080,6 +1080,21 @@ async def test_rest_play_refuses_configured_target_that_is_not_ready(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_rest_seek_refuses_configured_target_that_is_not_ready(monkeypatch):
+    client = FakeCommandSpotifyClient()
+
+    monkeypatch.setattr(main.store, "get_target_device", lambda: main.TargetDevice(device_id="speaker-2"))
+
+    with pytest.raises(main.HTTPException) as exc:
+        await main.seek(SeekCommand(position_ms=42000), client=client)
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["readiness"]["ready_for_live_control"] is False
+    assert exc.value.detail["readiness"]["risks"] == ["inactive_device", "volume_unavailable"]
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
 async def test_rest_transfer_refuses_unsafe_target(monkeypatch):
     client = FakeCommandSpotifyClient()
     client.device_items = [{"id": "restricted-1", "name": "Restricted", "is_restricted": True}]
@@ -1145,6 +1160,34 @@ async def test_mqtt_next_refuses_configured_target_that_is_not_ready(monkeypatch
             False,
             False,
             "next target is not ready for live control: inactive_device,volume_unavailable",
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_mqtt_seek_refuses_configured_target_that_is_not_ready(monkeypatch):
+    client = FakeCommandSpotifyClient()
+    status_pulses = []
+
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None):
+        status_pulses.append((command_type, command_request_id, command_pending, command_ok, command_error))
+
+    monkeypatch.setattr(main, "spotify", client)
+    monkeypatch.setattr(main.store, "get_target_device", lambda: main.TargetDevice(device_id="speaker-2"))
+    monkeypatch.setattr(main, "publish_mqtt_status", fake_publish_mqtt_status)
+
+    with pytest.raises(main.TargetNotReadyForLiveControl):
+        await main.handle_mqtt_command({"request_id": "knob-seek-unready", "type": "seek", "position_ms": 42000})
+
+    assert client.calls == []
+    assert status_pulses == [
+        ("seek", "knob-seek-unready", True, None, None),
+        (
+            "seek",
+            "knob-seek-unready",
+            False,
+            False,
+            "seek target is not ready for live control: inactive_device,volume_unavailable",
         ),
     ]
 

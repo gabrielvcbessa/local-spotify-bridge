@@ -16,7 +16,7 @@ MQTT_COMMAND_POLICIES: dict[str, MqttCommandPolicy] = {
     "next": MqttCommandPolicy(follow_up_refresh=True, playback_affecting=True),
     "previous": MqttCommandPolicy(follow_up_refresh=True, playback_affecting=True),
     "volume_set": MqttCommandPolicy(follow_up_refresh=True),
-    "seek": MqttCommandPolicy(follow_up_refresh=True),
+    "seek": MqttCommandPolicy(follow_up_refresh=True, playback_affecting=True),
     "select_source": MqttCommandPolicy(follow_up_refresh=True, playback_affecting=True),
     "transfer": MqttCommandPolicy(follow_up_refresh=True, refresh_devices=True, playback_affecting=True),
     "shuffle_set": MqttCommandPolicy(follow_up_refresh=True),

@@ -1369,9 +1369,14 @@ async def transfer_playback(
 @app.post("/v1/control/seek", status_code=204)
 async def seek(command: SeekCommand, client: Annotated[SpotifyClient, Depends(spotify_client)] = spotify):
     try:
-        await client.seek(command.position_ms, await command_device_id(client, command.device_id))
+        await client.seek(
+            command.position_ms,
+            await rest_live_control_device_id(client, command.device_id, command_type="seek"),
+        )
         await publish_mqtt_status(command_type="seek", command_ok=True)
         await refresh_after_successful_command(client)
+    except HTTPException:
+        raise
     except Exception as exc:
         raise translate_spotify_error(exc) from exc
 
@@ -2411,7 +2416,10 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
             position_ms = command.get("position_ms")
             if not isinstance(position_ms, int) or position_ms < 0:
                 raise ValueError("seek requires non-negative integer position_ms.")
-            await spotify.seek(position_ms, await command_device_id(spotify, command.get("device_id")))
+            await spotify.seek(
+                position_ms,
+                await verified_live_control_device_id(spotify, command.get("device_id"), command_type=command_type),
+            )
         elif command_type == "select_source":
             context_uri = command.get("uri") or command.get("context_uri")
             if not isinstance(context_uri, str) or not context_uri:
