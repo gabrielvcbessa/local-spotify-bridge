@@ -202,7 +202,7 @@ async def test_mqtt_knob_snapshot_publishes_control_state(monkeypatch):
         return None
 
     async def fake_resolved_context_name(*_args, **_kwargs):
-        return None
+        return "Resolved Playlist"
 
     monkeypatch.setattr(main.broker, "publish_mqtt_retained", fake_publish_mqtt_retained)
     monkeypatch.setattr(main, "publish_mqtt_art_payloads", fake_publish_mqtt_art_payloads)
@@ -220,6 +220,8 @@ async def test_mqtt_knob_snapshot_publishes_control_state(monkeypatch):
         device_name="Speaker",
         device_volume_percent=42,
         volume_control_supported=True,
+        album="Album fallback",
+        raw={"context": {"type": "playlist", "uri": "spotify:playlist:playlist-1"}},
     )
 
     await main.mqtt_knob_snapshot(7, state, force_publish=True)
@@ -232,6 +234,7 @@ async def test_mqtt_knob_snapshot_publishes_control_state(monkeypatch):
     assert payload["version"] == 7
     assert payload["playing"] is True
     assert payload["track_id"] == "track-1"
+    assert payload["context"]["display_name"] == "Resolved Playlist"
     assert payload["device"]["id"] == "device-1"
     assert payload["device"]["volume_percent"] == 42
 

@@ -103,6 +103,7 @@ def test_mqtt_control_state_payload_is_small_fast_state():
             repeat_state="off",
             raw={"context": {"type": "playlist", "uri": "spotify:playlist:playlist-1"}},
         ),
+        context_name="Playlist name",
     )
 
     assert payload["version"] == 9
@@ -111,7 +112,7 @@ def test_mqtt_control_state_payload_is_small_fast_state():
     assert payload["track_saved"] is True
     assert payload["artist_text"] == "Artist"
     assert payload["context"]["type"] == "playlist"
-    assert payload["context"]["display_name"] == "Album fallback"
+    assert payload["context"]["display_name"] == "Playlist name"
     assert payload["device"]["id"] == "device-1"
     assert payload["device"]["volume_control_supported"] is True
     assert "art" not in payload

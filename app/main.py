@@ -1720,7 +1720,11 @@ async def mqtt_knob_snapshot(version: int, state, force_publish: bool = False) -
     await prewarm_cached_track_art(spotify, state, art_options)
     await publish_mqtt_art_payloads(spotify, state, art_options)
     await publish_mqtt_status(force_publish=force_publish)
-    await broker.publish_mqtt_retained("control_state", mqtt_control_state(version, state), force=force_publish)
+    await broker.publish_mqtt_retained(
+        "control_state",
+        mqtt_control_state(version, state, context_name=context_name),
+        force=force_publish,
+    )
     snapshot = knob_snapshot(
         version=version,
         state=state,
@@ -1745,8 +1749,8 @@ def mqtt_knob_config() -> dict[str, Any]:
     )
 
 
-def mqtt_control_state(version: int, state: PlaybackSnapshot | None) -> dict[str, Any]:
-    return mqtt_control_state_payload(version, state)
+def mqtt_control_state(version: int, state: PlaybackSnapshot | None, *, context_name: str | None = None) -> dict[str, Any]:
+    return mqtt_control_state_payload(version, state, context_name=context_name)
 
 
 def track_id_from_command_or_state(command: dict[str, Any], state: PlaybackSnapshot | None) -> str:

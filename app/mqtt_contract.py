@@ -182,16 +182,24 @@ def mqtt_knob_config_payload(
     }
 
 
-def mqtt_control_state_payload(version: int, state: PlaybackSnapshot | None) -> dict[str, Any]:
+def mqtt_control_state_payload(
+    version: int,
+    state: PlaybackSnapshot | None,
+    *,
+    context_name: str | None = None,
+) -> dict[str, Any]:
     context: dict[str, str | None] | None = None
     if state is not None:
         context_parts = playback_context_parts(state)
-        context_name = context_parts["name"] or state.album
+        display_name = context_name or context_parts["name"]
+        if context_parts["type"] != "playlist":
+            display_name = context_parts["name"] or state.album
+        display_name = display_name or state.album
         context = {
             "type": context_parts["type"],
             "uri": context_parts["uri"],
             "id": context_parts["id"],
-            "display_name": context_name,
+            "display_name": display_name,
             "fallback_name": state.album,
         }
     payload: dict[str, Any] = {
