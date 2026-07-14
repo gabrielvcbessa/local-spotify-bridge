@@ -123,6 +123,12 @@ def test_health_exposes_consumer_detection_and_current_polling_thresholds():
     assert "playback_effective_interval_seconds" in polling
     assert "background_effective_interval_seconds" in polling
     assert "playlist_effective_interval_seconds" in polling
+    assert payload["mqtt_protocol"]["schema_version"] == 2
+    assert payload["backend_capabilities"]["backend"] == "local_spotify_bridge"
+    assert payload["backend_capabilities"]["transport"] == "spotify_web_api"
+    assert payload["backend_capabilities"]["library"]["recent_tracks"] is True
+    assert payload["backend_capabilities"]["devices"]["readiness"] is True
+    assert payload["backend_capabilities"]["art"]["rgb565"] is True
     assert "mqtt_commands" in payload
     assert "consumer_idle_explanation" in payload
     assert "reason" in payload["consumer_idle_explanation"]
@@ -243,6 +249,7 @@ def test_debug_dashboard_serves_html():
     assert "Last MQTT Command" in response.text
     assert "Spotify Connection" in response.text
     assert "Target Readiness" in response.text
+    assert "Backend Contract" in response.text
     assert "Consumer Decision" in response.text
     assert "MQTT Command / Request History" in response.text
     assert "Retained MQTT Payloads" in response.text
@@ -250,6 +257,8 @@ def test_debug_dashboard_serves_html():
     assert "spotifyDisconnect" in response.text
     assert "targetReadinessDetail" in response.text
     assert "targetReadinessMeta" in response.text
+    assert "backendContractDetail" in response.text
+    assert "backendContractMeta" in response.text
     assert "/v1/auth/token" in response.text
     assert "mqttRetainedRows" in response.text
     assert "consumerReasonDetail" in response.text

@@ -16,7 +16,7 @@ from .knob import knob_snapshot
 from .knob_mqtt import devices_payload, envelope, library_item_payload, library_page_payload, library_root_payload, status_payload
 from .models import PlaybackCommand, PlaybackSnapshot, SeekCommand, TargetDeviceCommand, TransferPlaybackCommand, VolumeCommand
 from .mqtt_commands import mqtt_command_policy, play_library_item_body, playback_body_from_mqtt, playlist_id_from_uri
-from .mqtt_contract import mqtt_control_state_payload, mqtt_knob_config_payload
+from .mqtt_contract import MQTT_KNOB_BACKEND_CAPABILITIES, mqtt_control_state_payload, mqtt_knob_config_payload, mqtt_protocol_payload
 from .spotify import (
     SpotifyAuthNotConfigured,
     SpotifyClient,
@@ -201,6 +201,8 @@ async def health() -> dict[str, Any]:
         "spotify_configured": spotify.spotify_configured,
         "spotify_auth_configured": settings.spotify_auth_configured,
         "spotify_refresh_token_source": spotify.refresh_token_source,
+        "mqtt_protocol": mqtt_protocol_payload(),
+        "backend_capabilities": MQTT_KNOB_BACKEND_CAPABILITIES,
         "mqtt_enabled": settings.mqtt_enabled,
         "state_version": broker.version,
         "last_spotify_error": broker.last_spotify_error,
@@ -497,6 +499,12 @@ def debug_dashboard_html() -> str:
         <div class="muted" id="targetReadinessMeta"></div>
       </div>
       <div class="panel">
+        <h2>Backend Contract</h2>
+        <div class="metric" id="backendContract">-</div>
+        <div class="muted" id="backendContractDetail"></div>
+        <div class="muted" id="backendContractMeta"></div>
+      </div>
+      <div class="panel">
         <h2>Stored Events</h2>
         <div class="metric" id="storedEvents">-</div>
         <div class="muted" id="retention"></div>
@@ -712,6 +720,18 @@ def debug_dashboard_html() -> str:
       document.getElementById("targetReadinessMeta").textContent =
         "active " + yesNo(readiness.active) + ", volume " + yesNo(readiness.volume_control_supported) +
         ", checked " + (readiness.checked_at || "-");
+      const capabilities = health.backend_capabilities || {};
+      const protocol = health.mqtt_protocol || {};
+      const library = capabilities.library || {};
+      const devices = capabilities.devices || {};
+      const art = capabilities.art || {};
+      document.getElementById("backendContract").textContent = capabilities.backend || "-";
+      document.getElementById("backendContract").className = "metric " + (capabilities.backend ? "ok" : "warn");
+      document.getElementById("backendContractDetail").textContent =
+        "transport " + (capabilities.transport || "-") + ", schema " + (protocol.schema_version || "-");
+      document.getElementById("backendContractMeta").textContent =
+        "library recent " + yesNo(library.recent_tracks) + ", devices readiness " + yesNo(devices.readiness) +
+        ", RGB565 art " + yesNo(art.rgb565);
       const idle = health.consumer_idle_explanation || {};
       const idleAge = idle.mqtt_last_activity_age_seconds == null ? "no MQTT activity" : Math.round(idle.mqtt_last_activity_age_seconds) + "s ago";
       document.getElementById("consumerReason").textContent = idle.reason || "-";

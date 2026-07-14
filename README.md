@@ -214,6 +214,9 @@ commands.
 poll interval, and any active `Retry-After` wait. Spotify does not publish one universal numeric
 quota for every app, so treat `SPOTIFY_RATE_LIMIT_SOFT_REQUESTS_PER_WINDOW` as a conservative local
 pressure threshold and tune it if `/health.rate_limit.near_threshold` is frequently true.
+It also includes the MQTT `protocol` block and backend `capabilities`, so setup and QA tools can
+confirm the active backend, transport, library/device/art support, and schema compatibility without
+subscribing to retained MQTT config first.
 
 ## Debug Dashboard
 
@@ -227,8 +230,8 @@ GET /v1/debug/events
 ```
 
 `/debug` is a browser page for local operations. It shows the current polling mode, detected
-consumers, the most recent MQTT command/result, recent events, and grouped counts for these periods:
-`1h`, `3h`, `6h`, `12h`, `1d`,
+consumers, target readiness, the advertised backend contract, the most recent MQTT command/result,
+recent events, and grouped counts for these periods: `1h`, `3h`, `6h`, `12h`, `1d`,
 `3d`, and `7d`. Summary rows are clickable: selecting a Spotify request type or MQTT topic opens a
 detail view with the latest matching events, status, and a capped response/payload preview. Recent
 events are paginated and filtered by the selected period.
