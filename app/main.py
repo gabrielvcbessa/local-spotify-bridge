@@ -1258,15 +1258,42 @@ async def set_target(
     try:
         if transfer_succeeded:
             await publish_mqtt_status(command_type="transfer", command_ok=True)
-            await refresh_after_successful_command(
+            published_state = await refresh_after_successful_command(
                 client,
                 follow_up_delays=settings.command_followup_refresh_delays_for("transfer"),
             )
-            await refresh_devices_after_successful_command(client)
+            device_refresh_ok = await refresh_devices_after_successful_command(client)
+            await publish_mqtt_status(
+                command_type="transfer",
+                command_ok=True,
+                command_metadata={
+                    "state_version": broker.version,
+                    "published_state": published_state,
+                    "state_refresh_ok": published_state,
+                    "state_publish_forced": True,
+                    "device_refresh_ok": device_refresh_ok,
+                    "published_devices": device_refresh_ok,
+                },
+            )
         else:
+            device_refresh_ok = None
             if client.spotify_configured:
                 await refresh_devices_and_publish(client)
-            await publish_mqtt_status(command_type="set_target", command_ok=True, force_publish=True)
+                device_refresh_ok = True
+            command_metadata = (
+                {
+                    "device_refresh_ok": device_refresh_ok,
+                    "published_devices": device_refresh_ok,
+                }
+                if device_refresh_ok is not None
+                else None
+            )
+            await publish_mqtt_status(
+                command_type="set_target",
+                command_ok=True,
+                command_metadata=command_metadata,
+                force_publish=True,
+            )
     except Exception as exc:
         raise translate_spotify_error(exc) from exc
     return {
@@ -1358,8 +1385,20 @@ async def transfer_playback(
         await client.transfer_playback(command.device_id, command.play)
         store.set_target_device(TargetDevice(device_id=command.device_id))
         await publish_mqtt_status(command_type="transfer", command_ok=True)
-        await refresh_after_successful_command(client, follow_up_delays=settings.command_followup_refresh_delays_for("transfer"))
-        await refresh_devices_after_successful_command(client)
+        published_state = await refresh_after_successful_command(client, follow_up_delays=settings.command_followup_refresh_delays_for("transfer"))
+        device_refresh_ok = await refresh_devices_after_successful_command(client)
+        await publish_mqtt_status(
+            command_type="transfer",
+            command_ok=True,
+            command_metadata={
+                "state_version": broker.version,
+                "published_state": published_state,
+                "state_refresh_ok": published_state,
+                "state_publish_forced": True,
+                "device_refresh_ok": device_refresh_ok,
+                "published_devices": device_refresh_ok,
+            },
+        )
     except HTTPException:
         raise
     except Exception as exc:
@@ -1742,11 +1781,13 @@ async def refresh_after_successful_command(
         return False
 
 
-async def refresh_devices_after_successful_command(client: SpotifyClient) -> None:
+async def refresh_devices_after_successful_command(client: SpotifyClient) -> bool:
     try:
         await refresh_devices_and_publish(client)
+        return True
     except Exception as exc:
         broker.mark_spotify_error(exc)
+        return False
 
 
 async def delayed_refresh_and_publish(client: SpotifyClient, delay_seconds: float) -> None:
@@ -1871,6 +1912,8 @@ def mqtt_status_payload(
                 "published_state",
                 "state_refresh_ok",
                 "state_publish_forced",
+                "device_refresh_ok",
+                "published_devices",
             ):
                 if key in command_metadata:
                     command_pulse[key] = command_metadata[key]
@@ -2497,8 +2540,9 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
             command_ok=True,
             command_metadata={"playback_affecting": command_policy.playback_affecting},
         )
+        device_refresh_ok: bool | None = None
         if command_policy.refresh_devices:
-            await refresh_devices_after_successful_command(spotify)
+            device_refresh_ok = await refresh_devices_after_successful_command(spotify)
         published_state = await refresh_after_successful_command(
             spotify,
             follow_up_delays=settings.command_followup_refresh_delays_for(command_type) if command_policy.follow_up_refresh else (),
@@ -2510,6 +2554,9 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
             "state_publish_forced": True,
             "playback_affecting": command_policy.playback_affecting,
         }
+        if device_refresh_ok is not None:
+            result["device_refresh_ok"] = device_refresh_ok
+            result["published_devices"] = device_refresh_ok
         await publish_mqtt_status(
             command_type=command_type,
             command_request_id=request_id,

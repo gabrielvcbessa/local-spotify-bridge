@@ -661,8 +661,9 @@ an `error` string when the bridge has a concrete failure reason. MQTT commands i
 acknowledgement if they miss the non-retained `command_result` and `runtime.command_pending` is
 false. When the bridge advertises `status_command_metadata`, retained `last_command` pulses can also
 include the same stable `ignored`, `reason`, `playback_affecting`, `state_version`,
-`published_state`, `state_refresh_ok`, and `state_publish_forced` fields as `command_result`, giving
-low-power clients enough fallback context to avoid showing a misleading success toast.
+`published_state`, `state_refresh_ok`, `state_publish_forced`, `device_refresh_ok`, and
+`published_devices` fields as `command_result`, giving low-power clients enough fallback context to
+avoid showing a misleading success toast or stale target-device readiness.
 
 MQTT command examples:
 

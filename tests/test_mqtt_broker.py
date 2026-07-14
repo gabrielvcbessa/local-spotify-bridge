@@ -528,7 +528,7 @@ async def test_mqtt_command_publishes_non_retained_result():
     broker._mqtt_client = mqtt
 
     async def command_handler(command):
-        return {"seen": command["type"]}
+        return {"seen": command["type"], "device_refresh_ok": True, "published_devices": True}
 
     broker.set_mqtt_command_handler(command_handler)
 
@@ -542,6 +542,8 @@ async def test_mqtt_command_publishes_non_retained_result():
         "request_id": None,
         "command": "next",
         "seen": "next",
+        "device_refresh_ok": True,
+        "published_devices": True,
     }
     assert result["received_at"] is not None
     assert result["completed_at"] is not None
@@ -558,6 +560,8 @@ async def test_mqtt_command_publishes_non_retained_result():
         "published_state": None,
         "state_refresh_ok": None,
         "state_publish_forced": None,
+        "device_refresh_ok": True,
+        "published_devices": True,
         "playback_affecting": None,
         "ignored": None,
         "reason": None,
@@ -660,6 +664,8 @@ async def test_mqtt_command_status_keeps_failed_command_context():
         "published_state": None,
         "state_refresh_ok": None,
         "state_publish_forced": None,
+        "device_refresh_ok": None,
+        "published_devices": None,
         "playback_affecting": None,
         "ignored": None,
         "reason": None,
