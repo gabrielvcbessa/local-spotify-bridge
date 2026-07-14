@@ -74,6 +74,9 @@ class ConnectionBroker:
         self.last_mqtt_command_at: str | None = None
         self.last_mqtt_command_result: dict[str, Any] | None = None
         self.last_mqtt_command_result_at: str | None = None
+        self.pending_mqtt_command: dict[str, Any] | None = None
+        self.pending_mqtt_command_at: str | None = None
+        self.pending_mqtt_command_count = 0
         self._mqtt_command_results_by_request_id: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._mqtt_request_results_by_request_id: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._mqtt_rpc_history: deque[dict[str, Any]] = deque(maxlen=64)
@@ -152,6 +155,19 @@ class ConnectionBroker:
             "type": command_type if isinstance(command_type, str) else None,
             "request_id": payload.get("request_id"),
         }
+
+    def mark_mqtt_command_pending(self, payload: dict[str, Any]) -> None:
+        self.pending_mqtt_command_at = datetime.now(UTC).isoformat()
+        command_type = payload.get("type")
+        self.pending_mqtt_command = {
+            "type": command_type if isinstance(command_type, str) else None,
+            "request_id": payload.get("request_id"),
+        }
+        self.pending_mqtt_command_count += 1
+
+    def clear_mqtt_command_pending(self) -> None:
+        self.pending_mqtt_command = None
+        self.pending_mqtt_command_at = None
 
     def mark_mqtt_command_result(self, response: dict[str, Any]) -> None:
         self.last_mqtt_command_result_at = datetime.now(UTC).isoformat()
@@ -257,6 +273,9 @@ class ConnectionBroker:
             "last_command": self.last_mqtt_command,
             "last_result_at": self.last_mqtt_command_result_at,
             "last_result": self.last_mqtt_command_result,
+            "pending_command_at": self.pending_mqtt_command_at,
+            "pending_command": self.pending_mqtt_command,
+            "pending_command_count": self.pending_mqtt_command_count,
             "cached_result_count": len(self._mqtt_command_results_by_request_id),
             "cached_request_result_count": len(self._mqtt_request_results_by_request_id),
             "recent": list(self._mqtt_rpc_history)[:20],
@@ -452,6 +471,8 @@ class ConnectionBroker:
                     self.mark_mqtt_command_result(response)
                 self.mark_mqtt_rpc_history(label=label, payload=message, response=response)
                 return
+            if label == "command":
+                self.mark_mqtt_command_pending(message)
             result = await handler(message)
             response = {
                 "ok": True,
@@ -467,6 +488,9 @@ class ConnectionBroker:
             if message is not None:
                 response["request_id"] = message.get("request_id")
                 response[label] = message.get("type")
+        finally:
+            if label == "command" and message is not None:
+                self.clear_mqtt_command_pending()
 
         completed_at = datetime.now(UTC)
         response["received_at"] = received_at.isoformat()

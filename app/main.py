@@ -1597,7 +1597,11 @@ def mqtt_base_url() -> str:
     return f"http://{host}:{settings.port}"
 
 
-def mqtt_status_payload(command_type: str | None = None, command_request_id: str | None = None) -> dict[str, Any]:
+def mqtt_status_payload(
+    command_type: str | None = None,
+    command_request_id: str | None = None,
+    command_pending: bool | None = None,
+) -> dict[str, Any]:
     command_pulse = None
     if command_type:
         command_pulse = {
@@ -1606,23 +1610,29 @@ def mqtt_status_payload(command_type: str | None = None, command_request_id: str
         }
         if command_request_id:
             command_pulse["request_id"] = command_request_id
+    spotify_configured = bool(getattr(spotify, "spotify_configured", False))
     return status_payload(
         version=broker.version,
-        spotify_configured=spotify.spotify_configured,
+        spotify_configured=spotify_configured,
         last_poll_at=broker.last_poll_at,
         last_error=broker.last_spotify_error,
         current_state=broker.current_state,
         target=store.get_target_device(),
         mqtt_connected=settings.mqtt_enabled,
+        command_pending=bool(broker.pending_mqtt_command) if command_pending is None else command_pending,
         command_pulse=command_pulse,
         target_readiness=cached_target_readiness(store.get_target_device()),
     )
 
 
-async def publish_mqtt_status(command_type: str | None = None, command_request_id: str | None = None) -> None:
+async def publish_mqtt_status(
+    command_type: str | None = None,
+    command_request_id: str | None = None,
+    command_pending: bool | None = None,
+) -> None:
     await broker.publish_mqtt_retained(
         "status",
-        mqtt_status_payload(command_type=command_type, command_request_id=command_request_id),
+        mqtt_status_payload(command_type=command_type, command_request_id=command_request_id, command_pending=command_pending),
     )
 
 
@@ -2084,86 +2094,91 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(request_id, str):
         request_id = None
     command_policy = mqtt_command_policy(command_type)
-
-    if command_type == "play_pause":
-        if broker.current_state and broker.current_state.is_playing:
+    await publish_mqtt_status(command_type=command_type, command_request_id=request_id, command_pending=True)
+    try:
+        if command_type == "play_pause":
+            if broker.current_state and broker.current_state.is_playing:
+                await spotify.pause(device_id=explicit_device_id(command.get("device_id")))
+            else:
+                await spotify.play(device_id=explicit_device_id(command.get("device_id")))
+        elif command_type == "play":
+            body = playback_body_from_mqtt(command)
+            await spotify.play(body=body, device_id=await command_device_id(spotify, command.get("device_id")))
+        elif command_type == "pause":
             await spotify.pause(device_id=explicit_device_id(command.get("device_id")))
+        elif command_type == "next":
+            await spotify.next_track(device_id=explicit_device_id(command.get("device_id")))
+            broker.mark_forward_transition_expected()
+        elif command_type == "previous":
+            await spotify.previous_track(device_id=explicit_device_id(command.get("device_id")))
+        elif command_type == "volume_set":
+            volume_percent = command.get("volume_percent")
+            if not isinstance(volume_percent, int):
+                raise ValueError("volume_set requires integer volume_percent.")
+            if not 0 <= volume_percent <= 100:
+                raise ValueError("volume_percent must be between 0 and 100.")
+            if broker.current_state and not broker.current_state.volume_control_supported:
+                await publish_mqtt_status(command_type=command_type, command_request_id=request_id, command_pending=False)
+                return {"ignored": True, "reason": "volume_control_unsupported"}
+            await spotify.set_volume(volume_percent, await command_device_id(spotify, command.get("device_id")))
+        elif command_type == "seek":
+            position_ms = command.get("position_ms")
+            if not isinstance(position_ms, int) or position_ms < 0:
+                raise ValueError("seek requires non-negative integer position_ms.")
+            await spotify.seek(position_ms, await command_device_id(spotify, command.get("device_id")))
+        elif command_type == "select_source":
+            context_uri = command.get("uri") or command.get("context_uri")
+            if not isinstance(context_uri, str) or not context_uri:
+                raise ValueError("select_source requires uri or context_uri.")
+            await spotify.play(
+                body={"context_uri": context_uri},
+                device_id=await command_device_id(spotify, command.get("device_id")),
+            )
+        elif command_type == "transfer":
+            device_id = command.get("device_id")
+            if not isinstance(device_id, str) or not device_id:
+                raise ValueError("transfer requires device_id.")
+            readiness = await target_device_readiness(spotify, TargetDevice(device_id=device_id), refresh=True)
+            if not readiness.get("safe_for_live_control", False):
+                raise ValueError(f"transfer target is not safe for live control: {','.join(readiness.get('risks', []))}")
+            play = command.get("play", True)
+            await spotify.transfer_playback(device_id, bool(play))
+            if command.get("set_target"):
+                store.set_target_device(TargetDevice(device_id=device_id))
+            await refresh_devices_and_publish(spotify)
+        elif command_type == "shuffle_set":
+            enabled = command.get("enabled")
+            if not isinstance(enabled, bool):
+                raise ValueError("shuffle_set requires boolean enabled.")
+            await spotify.set_shuffle(enabled, await command_device_id(spotify, command.get("device_id")))
+        elif command_type == "repeat_set":
+            mode = command.get("mode")
+            if not isinstance(mode, str):
+                raise ValueError("repeat_set requires string mode.")
+            await spotify.set_repeat(mode, await command_device_id(spotify, command.get("device_id")))
+        elif command_type == "save_current_track":
+            await spotify.save_track(track_id_from_command_or_state(command, broker.current_state))
+        elif command_type == "unsave_current_track":
+            await spotify.remove_saved_track(track_id_from_command_or_state(command, broker.current_state))
+        elif command_type == "play_library_item":
+            body = play_library_item_body(command)
+            await spotify.play(body=body, device_id=await command_device_id(spotify, command.get("device_id")))
         else:
-            await spotify.play(device_id=explicit_device_id(command.get("device_id")))
-    elif command_type == "play":
-        body = playback_body_from_mqtt(command)
-        await spotify.play(body=body, device_id=await command_device_id(spotify, command.get("device_id")))
-    elif command_type == "pause":
-        await spotify.pause(device_id=explicit_device_id(command.get("device_id")))
-    elif command_type == "next":
-        await spotify.next_track(device_id=explicit_device_id(command.get("device_id")))
-        broker.mark_forward_transition_expected()
-    elif command_type == "previous":
-        await spotify.previous_track(device_id=explicit_device_id(command.get("device_id")))
-    elif command_type == "volume_set":
-        volume_percent = command.get("volume_percent")
-        if not isinstance(volume_percent, int):
-            raise ValueError("volume_set requires integer volume_percent.")
-        if not 0 <= volume_percent <= 100:
-            raise ValueError("volume_percent must be between 0 and 100.")
-        if broker.current_state and not broker.current_state.volume_control_supported:
-            return {"ignored": True, "reason": "volume_control_unsupported"}
-        await spotify.set_volume(volume_percent, await command_device_id(spotify, command.get("device_id")))
-    elif command_type == "seek":
-        position_ms = command.get("position_ms")
-        if not isinstance(position_ms, int) or position_ms < 0:
-            raise ValueError("seek requires non-negative integer position_ms.")
-        await spotify.seek(position_ms, await command_device_id(spotify, command.get("device_id")))
-    elif command_type == "select_source":
-        context_uri = command.get("uri") or command.get("context_uri")
-        if not isinstance(context_uri, str) or not context_uri:
-            raise ValueError("select_source requires uri or context_uri.")
-        await spotify.play(
-            body={"context_uri": context_uri},
-            device_id=await command_device_id(spotify, command.get("device_id")),
-        )
-    elif command_type == "transfer":
-        device_id = command.get("device_id")
-        if not isinstance(device_id, str) or not device_id:
-            raise ValueError("transfer requires device_id.")
-        readiness = await target_device_readiness(spotify, TargetDevice(device_id=device_id), refresh=True)
-        if not readiness.get("safe_for_live_control", False):
-            raise ValueError(f"transfer target is not safe for live control: {','.join(readiness.get('risks', []))}")
-        play = command.get("play", True)
-        await spotify.transfer_playback(device_id, bool(play))
-        if command.get("set_target"):
-            store.set_target_device(TargetDevice(device_id=device_id))
-        await refresh_devices_and_publish(spotify)
-    elif command_type == "shuffle_set":
-        enabled = command.get("enabled")
-        if not isinstance(enabled, bool):
-            raise ValueError("shuffle_set requires boolean enabled.")
-        await spotify.set_shuffle(enabled, await command_device_id(spotify, command.get("device_id")))
-    elif command_type == "repeat_set":
-        mode = command.get("mode")
-        if not isinstance(mode, str):
-            raise ValueError("repeat_set requires string mode.")
-        await spotify.set_repeat(mode, await command_device_id(spotify, command.get("device_id")))
-    elif command_type == "save_current_track":
-        await spotify.save_track(track_id_from_command_or_state(command, broker.current_state))
-    elif command_type == "unsave_current_track":
-        await spotify.remove_saved_track(track_id_from_command_or_state(command, broker.current_state))
-    elif command_type == "play_library_item":
-        body = play_library_item_body(command)
-        await spotify.play(body=body, device_id=await command_device_id(spotify, command.get("device_id")))
-    else:
-        raise ValueError(f"Unsupported MQTT command type: {command_type}")
+            raise ValueError(f"Unsupported MQTT command type: {command_type}")
 
-    await refresh_and_publish(
-        spotify,
-        follow_up_delays=settings.command_followup_refresh_delays_for(command_type) if command_policy.follow_up_refresh else (),
-    )
-    await publish_mqtt_status(command_type=command_type, command_request_id=request_id)
-    return {
-        "state_version": broker.version,
-        "published_state": True,
-        "playback_affecting": command_policy.playback_affecting,
-    }
+        await refresh_and_publish(
+            spotify,
+            follow_up_delays=settings.command_followup_refresh_delays_for(command_type) if command_policy.follow_up_refresh else (),
+        )
+        await publish_mqtt_status(command_type=command_type, command_request_id=request_id, command_pending=False)
+        return {
+            "state_version": broker.version,
+            "published_state": True,
+            "playback_affecting": command_policy.playback_affecting,
+        }
+    except Exception:
+        await publish_mqtt_status(command_type=command_type, command_request_id=request_id, command_pending=False)
+        raise
 
 
 async def resolved_context_name(

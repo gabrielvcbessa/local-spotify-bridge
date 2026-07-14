@@ -136,6 +136,7 @@ def status_payload(
     current_state: PlaybackSnapshot | None,
     target: TargetDevice | None,
     mqtt_connected: bool,
+    command_pending: bool = False,
     command_pulse: dict[str, Any] | None = None,
     target_readiness: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -167,7 +168,7 @@ def status_payload(
         "reachable": spotify_configured and last_error is None,
         "authenticated": spotify_configured and status != "auth_expired",
         "target_ready": target_ready,
-        "command_pending": False,
+        "command_pending": command_pending,
         "degraded": status != "ready",
         "state": status,
     }

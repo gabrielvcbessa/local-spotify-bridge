@@ -1,3 +1,4 @@
+import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 
@@ -304,6 +305,23 @@ def test_mqtt_status_payload_exposes_m5_status_fields_and_command_pulses():
     assert mqtt_payload_fingerprint(ready) != mqtt_payload_fingerprint(next_pulse)
 
 
+def test_mqtt_status_payload_exposes_pending_command_runtime_state():
+    payload = status_payload(
+        version=1,
+        spotify_configured=True,
+        last_poll_at="2026-07-06T10:00:00+00:00",
+        last_error=None,
+        current_state=PlaybackSnapshot(device_id="speaker-1"),
+        target=None,
+        mqtt_connected=True,
+        command_pending=True,
+    )
+
+    assert payload["runtime"]["command_pending"] is True
+    assert payload["runtime"]["configured"] is True
+    assert payload["runtime"]["reachable"] is True
+
+
 def test_mqtt_status_payload_exposes_product_setup_states():
     unconfigured = status_payload(
         version=1,
@@ -423,6 +441,46 @@ async def test_mqtt_command_publishes_non_retained_result():
         "latency_ms": result["latency_ms"],
     }
     assert broker.mqtt_command_status()["last_result_at"] is not None
+
+
+@pytest.mark.anyio
+async def test_mqtt_command_status_tracks_pending_command():
+    broker = ConnectionBroker(
+        Settings(
+            MQTT_ENABLED=True,
+            MQTT_KNOB_TOPIC_PREFIX="rotary",
+            MQTT_KNOB_DEVICE_ID="kitchen",
+            MQTT_QOS=1,
+        )
+    )
+    mqtt = FakeMqttClient()
+    broker._mqtt_client = mqtt
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def command_handler(command):
+        started.set()
+        await release.wait()
+        return {"seen": command["type"]}
+
+    broker.set_mqtt_command_handler(command_handler)
+    task = asyncio.create_task(
+        broker._handle_mqtt_message("rotary/kitchen/command", '{"request_id":"knob-pending","type":"next"}')
+    )
+    await started.wait()
+
+    status = broker.mqtt_command_status()
+    assert status["pending_command"] == {"type": "next", "request_id": "knob-pending"}
+    assert status["pending_command_at"] is not None
+    assert status["pending_command_count"] == 1
+
+    release.set()
+    await task
+
+    status = broker.mqtt_command_status()
+    assert status["pending_command"] is None
+    assert status["pending_command_at"] is None
+    assert status["pending_command_count"] == 1
 
 
 @pytest.mark.anyio
