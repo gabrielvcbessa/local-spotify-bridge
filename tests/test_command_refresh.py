@@ -487,7 +487,7 @@ async def test_mqtt_save_track_uses_payload_track_uri_and_publishes_status(monke
     )
 
     assert client.calls == [("save_track", "track-1")]
-    assert refreshes == [()]
+    assert refreshes == [main.settings.command_followup_refresh_delays_for("save_current_track")]
     assert status_pulses == [
         ("save_current_track", "knob-like-1", True, None),
         ("save_current_track", "knob-like-1", False, True),
@@ -517,7 +517,7 @@ async def test_mqtt_unsave_track_falls_back_to_current_state(monkeypatch):
         main.broker.current_state = None
 
     assert client.calls == [("remove_saved_track", "track-2")]
-    assert refreshes == [()]
+    assert refreshes == [main.settings.command_followup_refresh_delays_for("unsave_current_track")]
     assert status_pulses == [
         ("unsave_current_track", "knob-unlike-1", True, None),
         ("unsave_current_track", "knob-unlike-1", False, True),

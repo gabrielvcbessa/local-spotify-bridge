@@ -70,6 +70,8 @@ class Settings(BaseSettings):
             "previous=0.5,1.5,3.0;"
             "select_source=0.7,1.8,3.5;"
             "play_library_item=0.7,1.8,3.5;"
+            "save_current_track=0.4,1.2;"
+            "unsave_current_track=0.4,1.2;"
             "transfer=0.7,1.8,3.5"
         ),
         alias="COMMAND_FOLLOWUP_REFRESH_PROFILES_SECONDS",

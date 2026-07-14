@@ -137,7 +137,7 @@ MQTT_KNOB_TOPIC_PREFIX=rotary
 MQTT_KNOB_DEVICE_ID=kitchen
 MQTT_QOS=1
 MQTT_KNOB_ART_SIZE=360
-COMMAND_FOLLOWUP_REFRESH_PROFILES_SECONDS=play=0.25,0.9;pause=0.25,0.9;play_pause=0.25,0.9;next=0.5,1.5,3.0;previous=0.5,1.5,3.0;select_source=0.7,1.8,3.5;play_library_item=0.7,1.8,3.5;transfer=0.7,1.8,3.5
+COMMAND_FOLLOWUP_REFRESH_PROFILES_SECONDS=play=0.25,0.9;pause=0.25,0.9;play_pause=0.25,0.9;next=0.5,1.5,3.0;previous=0.5,1.5,3.0;select_source=0.7,1.8,3.5;play_library_item=0.7,1.8,3.5;save_current_track=0.4,1.2;unsave_current_track=0.4,1.2;transfer=0.7,1.8,3.5
 ```
 
 Artwork cache settings:
@@ -197,7 +197,7 @@ SPOTIFY_PRELOAD_NEXT_ENABLED=true
 SPOTIFY_PLAYLIST_SORT=spotify
 SPOTIFY_TRACK_END_REFRESH_PADDING_SECONDS=1
 COMMAND_FOLLOWUP_REFRESH_DELAYS_SECONDS=0.5,1.5
-COMMAND_FOLLOWUP_REFRESH_PROFILES_SECONDS=play=0.25,0.9;pause=0.25,0.9;play_pause=0.25,0.9;next=0.5,1.5,3.0;previous=0.5,1.5,3.0;select_source=0.7,1.8,3.5;play_library_item=0.7,1.8,3.5;transfer=0.7,1.8,3.5
+COMMAND_FOLLOWUP_REFRESH_PROFILES_SECONDS=play=0.25,0.9;pause=0.25,0.9;play_pause=0.25,0.9;next=0.5,1.5,3.0;previous=0.5,1.5,3.0;select_source=0.7,1.8,3.5;play_library_item=0.7,1.8,3.5;save_current_track=0.4,1.2;unsave_current_track=0.4,1.2;transfer=0.7,1.8,3.5
 ```
 
 `SPOTIFY_PLAYLIST_SORT=spotify` preserves Spotify's playlist order from `/me/playlists`.
@@ -306,7 +306,8 @@ curl -X POST http://localhost:8090/v1/control/transfer \
 After every successful command, the bridge immediately refreshes playback state from Spotify and
 publishes changed state through WebSocket and MQTT; it does not wait for the next
 `POLL_INTERVAL_SECONDS` tick. Playback-changing commands such as `play`, `pause`, `play_pause`,
-`next`, `previous`, `select_source`, `play_library_item`, and `transfer` also schedule short
+`next`, `previous`, `select_source`, `play_library_item`, `save_current_track`,
+`unsave_current_track`, and `transfer` also schedule short
 follow-up refreshes so Spotify Connect has time to settle before the bridge publishes the final
 track/device state. `transfer` refreshes the retained devices topic as well, so a target-device
 change is visible without waiting for the background devices poller. Tune those follow-up delays
@@ -651,6 +652,8 @@ MQTT command examples:
 { "request_id": "knob-108", "type": "repeat_set", "mode": "context" }
 { "request_id": "knob-109", "type": "transfer", "device_id": "...", "play": true, "set_target": true }
 { "request_id": "knob-110", "type": "play_library_item", "context_uri": "spotify:playlist:...", "item_uri": "spotify:track:..." }
+{ "request_id": "knob-111", "type": "save_current_track", "track_uri": "spotify:track:..." }
+{ "request_id": "knob-112", "type": "unsave_current_track", "track_uri": "spotify:track:..." }
 ```
 
 After a successful command, the bridge refreshes Spotify state and publishes an updated retained
