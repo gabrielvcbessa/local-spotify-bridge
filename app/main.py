@@ -1132,6 +1132,46 @@ async def verify_target_for_live_control(
     }
 
 
+class TargetNotReadyForLiveControl(ValueError):
+    def __init__(self, command_type: str, readiness: dict[str, Any]) -> None:
+        risks = readiness.get("risks", [])
+        risk_text = ",".join(str(risk) for risk in risks) if isinstance(risks, list) and risks else "unknown"
+        super().__init__(f"{command_type} target is not ready for live control: {risk_text}")
+        self.command_type = command_type
+        self.readiness = readiness
+
+
+async def verified_live_control_device_id(
+    client: SpotifyClient,
+    explicit_device_id_value: Any,
+    *,
+    command_type: str,
+) -> str | None:
+    explicit = explicit_device_id(explicit_device_id_value)
+    if explicit:
+        return explicit
+    target = store.get_target_device()
+    if target is None:
+        return None
+    readiness = await target_device_readiness(client, target, refresh=True)
+    if not readiness.get("ready_for_live_control", False):
+        raise TargetNotReadyForLiveControl(command_type, readiness)
+    return explicit_device_id(readiness.get("resolved_device_id"))
+
+
+async def rest_live_control_device_id(
+    client: SpotifyClient,
+    explicit_device_id_value: Any,
+    *,
+    command_type: str,
+) -> str | None:
+    try:
+        return await verified_live_control_device_id(client, explicit_device_id_value, command_type=command_type)
+    except TargetNotReadyForLiveControl as exc:
+        await publish_mqtt_status(command_type=command_type, command_ok=False, command_error=str(exc), force_publish=True)
+        raise HTTPException(status_code=409, detail={"message": str(exc), "readiness": exc.readiness}) from exc
+
+
 @app.get("/v1/knob/snapshot")
 async def get_knob_snapshot(
     request: Request,
@@ -1250,10 +1290,12 @@ async def websocket_state(websocket: WebSocket) -> None:
 async def play(command: PlaybackCommand, client: Annotated[SpotifyClient, Depends(spotify_client)]):
     body = command.model_dump(exclude_none=True, exclude={"device_id"})
     try:
-        device_id = await command_device_id(client, command.device_id)
+        device_id = await rest_live_control_device_id(client, command.device_id, command_type="play")
         await client.play(body=body, device_id=device_id)
         await publish_mqtt_status(command_type="play", command_ok=True)
         await refresh_after_successful_command(client, follow_up_delays=settings.command_followup_refresh_delays_for("play"))
+    except HTTPException:
+        raise
     except Exception as exc:
         raise translate_spotify_error(exc) from exc
 
@@ -1264,9 +1306,11 @@ async def pause(
     client: Annotated[SpotifyClient, Depends(spotify_client)] = spotify,
 ):
     try:
-        await client.pause(device_id=await command_device_id(client, device_id))
+        await client.pause(device_id=await rest_live_control_device_id(client, device_id, command_type="pause"))
         await publish_mqtt_status(command_type="pause", command_ok=True)
         await refresh_after_successful_command(client, follow_up_delays=settings.command_followup_refresh_delays_for("pause"))
+    except HTTPException:
+        raise
     except Exception as exc:
         raise translate_spotify_error(exc) from exc
 
@@ -1277,10 +1321,12 @@ async def next_track(
     client: Annotated[SpotifyClient, Depends(spotify_client)] = spotify,
 ):
     try:
-        await client.next_track(device_id=explicit_device_id(device_id))
+        await client.next_track(device_id=await rest_live_control_device_id(client, device_id, command_type="next"))
         broker.mark_forward_transition_expected()
         await publish_mqtt_status(command_type="next", command_ok=True)
         await refresh_after_successful_command(client, follow_up_delays=settings.command_followup_refresh_delays_for("next"))
+    except HTTPException:
+        raise
     except Exception as exc:
         raise translate_spotify_error(exc) from exc
 
@@ -1291,9 +1337,11 @@ async def previous_track(
     client: Annotated[SpotifyClient, Depends(spotify_client)] = spotify,
 ):
     try:
-        await client.previous_track(device_id=explicit_device_id(device_id))
+        await client.previous_track(device_id=await rest_live_control_device_id(client, device_id, command_type="previous"))
         await publish_mqtt_status(command_type="previous", command_ok=True)
         await refresh_after_successful_command(client, follow_up_delays=settings.command_followup_refresh_delays_for("previous"))
+    except HTTPException:
+        raise
     except Exception as exc:
         raise translate_spotify_error(exc) from exc
 
@@ -2329,20 +2377,21 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
     await publish_mqtt_status(command_type=command_type, command_request_id=request_id, command_pending=True)
     try:
         if command_type == "play_pause":
+            device_id = await verified_live_control_device_id(spotify, command.get("device_id"), command_type=command_type)
             if broker.current_state and broker.current_state.is_playing:
-                await spotify.pause(device_id=explicit_device_id(command.get("device_id")))
+                await spotify.pause(device_id=device_id)
             else:
-                await spotify.play(device_id=explicit_device_id(command.get("device_id")))
+                await spotify.play(device_id=device_id)
         elif command_type == "play":
             body = playback_body_from_mqtt(command)
-            await spotify.play(body=body, device_id=await command_device_id(spotify, command.get("device_id")))
+            await spotify.play(body=body, device_id=await verified_live_control_device_id(spotify, command.get("device_id"), command_type=command_type))
         elif command_type == "pause":
-            await spotify.pause(device_id=explicit_device_id(command.get("device_id")))
+            await spotify.pause(device_id=await verified_live_control_device_id(spotify, command.get("device_id"), command_type=command_type))
         elif command_type == "next":
-            await spotify.next_track(device_id=explicit_device_id(command.get("device_id")))
+            await spotify.next_track(device_id=await verified_live_control_device_id(spotify, command.get("device_id"), command_type=command_type))
             broker.mark_forward_transition_expected()
         elif command_type == "previous":
-            await spotify.previous_track(device_id=explicit_device_id(command.get("device_id")))
+            await spotify.previous_track(device_id=await verified_live_control_device_id(spotify, command.get("device_id"), command_type=command_type))
         elif command_type == "volume_set":
             volume_percent = command.get("volume_percent")
             if not isinstance(volume_percent, int):
@@ -2369,7 +2418,7 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
                 raise ValueError("select_source requires uri or context_uri.")
             await spotify.play(
                 body={"context_uri": context_uri},
-                device_id=await command_device_id(spotify, command.get("device_id")),
+                device_id=await verified_live_control_device_id(spotify, command.get("device_id"), command_type=command_type),
             )
         elif command_type == "transfer":
             device_id = command.get("device_id")
@@ -2398,7 +2447,7 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
             await spotify.remove_saved_track(track_id_from_command_or_state(command, broker.current_state))
         elif command_type == "play_library_item":
             body = play_library_item_body(command)
-            await spotify.play(body=body, device_id=await command_device_id(spotify, command.get("device_id")))
+            await spotify.play(body=body, device_id=await verified_live_control_device_id(spotify, command.get("device_id"), command_type=command_type))
         else:
             raise ValueError(f"Unsupported MQTT command type: {command_type}")
 
