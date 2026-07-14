@@ -72,7 +72,8 @@ http://localhost:8090/v1/auth/login
 ```
 
 5. Copy `authorize_url` from the JSON response, open it in your browser, and approve Spotify access.
-6. Spotify redirects back to `/v1/auth/callback`; the bridge saves the returned `refresh_token`.
+6. Spotify redirects back to `/v1/auth/callback`; the bridge saves the returned runtime credential
+   and the callback response reports only token-free metadata.
 7. `/health` should show `spotify_configured: true` and
    `spotify_refresh_token_source: runtime` without a restart.
 

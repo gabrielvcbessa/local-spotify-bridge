@@ -1144,8 +1144,9 @@ async def auth_callback(
         raise translate_spotify_error(exc) from exc
 
     return {
-        "message": "Refresh token saved. The bridge is configured now; no restart is required.",
-        "refresh_token": token.get("refresh_token"),
+        "message": "Spotify runtime credential saved. The bridge is configured now; no restart is required.",
+        "refresh_token_saved": bool(token.get("refresh_token")),
+        "spotify_refresh_token_source": client.refresh_token_source,
         "access_token_expires_in": token.get("expires_in"),
         "scope": token.get("scope"),
         "token_type": token.get("token_type"),

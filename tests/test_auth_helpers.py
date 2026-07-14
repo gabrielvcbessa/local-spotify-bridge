@@ -134,6 +134,38 @@ async def test_auth_disconnect_publishes_status(monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_auth_callback_returns_token_free_metadata(monkeypatch):
+    class FakePoller:
+        started = False
+
+        def start(self):
+            self.started = True
+
+    class FakeSpotify:
+        refresh_token_source = "runtime"
+
+        async def exchange_code(self, code):
+            assert code == "abc123"
+            return {
+                "refresh_token": "secret-refresh-token",
+                "expires_in": 3600,
+                "scope": "user-read-playback-state",
+                "token_type": "Bearer",
+            }
+
+    fake_poller = FakePoller()
+    monkeypatch.setattr(main, "poller", fake_poller)
+
+    response = await main.auth_callback(code="abc123", client=FakeSpotify())
+
+    assert response["refresh_token_saved"] is True
+    assert response["spotify_refresh_token_source"] == "runtime"
+    assert "refresh_token" not in response
+    assert "secret-refresh-token" not in str(response)
+    assert fake_poller.started is True
+
+
+@pytest.mark.anyio
 async def test_playlist_name_falls_back_to_user_library_when_direct_lookup_fails():
     async def handler(request: httpx.Request) -> httpx.Response:
         if request.url == "https://accounts.spotify.com/api/token":
