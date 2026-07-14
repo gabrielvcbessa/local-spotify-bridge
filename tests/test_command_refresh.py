@@ -40,6 +40,12 @@ class FakeCommandSpotifyClient:
     async def set_volume(self, volume_percent: int, device_id: str | None = None) -> None:
         self.calls.append(("volume", device_id))
 
+    async def set_shuffle(self, enabled: bool, device_id: str | None = None) -> None:
+        self.calls.append(("shuffle", device_id))
+
+    async def set_repeat(self, mode: str, device_id: str | None = None) -> None:
+        self.calls.append(("repeat", device_id))
+
     async def transfer_playback(self, device_id: str, play: bool = True) -> None:
         self.calls.append(("transfer", device_id))
 
@@ -464,6 +470,65 @@ async def test_mqtt_command_success_status_publishes_before_state_refresh(monkey
         ("status", "next", "knob-next-ack", True, None),
         ("status", "next", "knob-next-ack", False, True),
         ("refresh", main.settings.command_followup_refresh_delays_for("next"), True),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_mqtt_fast_controls_use_command_follow_up_profiles(monkeypatch):
+    client = FakeCommandSpotifyClient()
+    refreshes = []
+    status_pulses = []
+
+    async def fake_refresh_and_publish(_client, *, follow_up_delays=(), force_publish=False):
+        refreshes.append((tuple(follow_up_delays), force_publish))
+        return True
+
+    async def fake_command_device_id(_client, device_id):
+        return device_id
+
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None):
+        _ = command_error
+        status_pulses.append((command_type, command_request_id, command_pending, command_ok))
+
+    monkeypatch.setattr(main, "spotify", client)
+    monkeypatch.setattr(main, "command_device_id", fake_command_device_id)
+    monkeypatch.setattr(main, "refresh_and_publish", fake_refresh_and_publish)
+    monkeypatch.setattr(main, "publish_mqtt_status", fake_publish_mqtt_status)
+
+    await main.handle_mqtt_command(
+        {"request_id": "knob-volume-1", "type": "volume_set", "volume_percent": 42, "device_id": "speaker-1"}
+    )
+    await main.handle_mqtt_command(
+        {"request_id": "knob-seek-1", "type": "seek", "position_ms": 30000, "device_id": "speaker-1"}
+    )
+    await main.handle_mqtt_command(
+        {"request_id": "knob-shuffle-1", "type": "shuffle_set", "enabled": True, "device_id": "speaker-1"}
+    )
+    await main.handle_mqtt_command(
+        {"request_id": "knob-repeat-1", "type": "repeat_set", "mode": "context", "device_id": "speaker-1"}
+    )
+
+    assert client.calls == [
+        ("volume", "speaker-1"),
+        ("seek", "speaker-1"),
+        ("shuffle", "speaker-1"),
+        ("repeat", "speaker-1"),
+    ]
+    assert refreshes == [
+        (main.settings.command_followup_refresh_delays_for("volume_set"), True),
+        (main.settings.command_followup_refresh_delays_for("seek"), True),
+        (main.settings.command_followup_refresh_delays_for("shuffle_set"), True),
+        (main.settings.command_followup_refresh_delays_for("repeat_set"), True),
+    ]
+    assert status_pulses == [
+        ("volume_set", "knob-volume-1", True, None),
+        ("volume_set", "knob-volume-1", False, True),
+        ("seek", "knob-seek-1", True, None),
+        ("seek", "knob-seek-1", False, True),
+        ("shuffle_set", "knob-shuffle-1", True, None),
+        ("shuffle_set", "knob-shuffle-1", False, True),
+        ("repeat_set", "knob-repeat-1", True, None),
+        ("repeat_set", "knob-repeat-1", False, True),
     ]
 
 
