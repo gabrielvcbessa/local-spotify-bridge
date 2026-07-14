@@ -644,6 +644,11 @@ attempts, while `target_readiness.ready_for_live_control` is the stricter prefli
 playback/volume tests: the target must be resolved, unrestricted, active, volume-controllable, and
 not sitting at zero volume. The same block includes `active`, `volume_control_supported`,
 `muted_or_zero_volume`, and `last_update_at` fields for setup and QA surfaces.
+The advertised `devices.readiness_contract.guarded_commands` list names the MQTT commands that use
+that strict gate when they rely on the configured target: play/pause, next/previous, seek, source
+selection, shuffle/repeat, and library-item playback. Commands with an explicit `device_id` bypass
+the configured-target gate, while `volume_set` remains allowed so a controller can raise a
+zero-volume target back into a ready state.
 `GET /v1/target/verify` uses the same strict readiness rule and returns 409 with the readiness block
 when setup should refuse a live command proof.
 Successful REST control and target-device changes also stamp a `last_command` pulse into `status`,
