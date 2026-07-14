@@ -48,6 +48,7 @@ user-modify-playback-state
 playlist-read-private
 playlist-read-collaborative
 user-library-read
+user-library-modify
 ```
 
 ### Getting The Refresh Token

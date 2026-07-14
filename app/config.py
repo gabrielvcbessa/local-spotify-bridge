@@ -15,7 +15,8 @@ class Settings(BaseSettings):
     spotify_scopes: str = Field(
         default=(
             "user-read-playback-state user-modify-playback-state "
-            "playlist-read-private playlist-read-collaborative user-library-read"
+            "playlist-read-private playlist-read-collaborative "
+            "user-library-read user-library-modify"
         ),
         alias="SPOTIFY_SCOPES",
     )

@@ -22,6 +22,7 @@ def test_authorize_url_contains_redirect_and_scopes():
     assert "client_id=client-id" in url
     assert "redirect_uri=http%3A%2F%2Flocalhost%3A8090%2Fv1%2Fauth%2Fcallback" in url
     assert "user-read-playback-state" in url
+    assert "user-library-modify" in url
     assert "state=state-1" in url
 
 
