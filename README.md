@@ -272,6 +272,7 @@ Target device examples:
 
 ```bash
 curl http://localhost:8090/v1/target
+curl http://localhost:8090/v1/target/verify
 curl -X POST http://localhost:8090/v1/target \
   -H "content-type: application/json" \
   -d '{"device_name":"Living Room Speaker","transfer_playback":true,"play":true}'
@@ -282,7 +283,9 @@ against Spotify's current device list, so it can recover when Spotify changes de
 `GET /v1/target` also returns a `readiness` block with the resolved device, current risks, volume
 support, and whether the target is safe for live control. Requests that transfer playback while
 setting a target are refused before calling Spotify when the target cannot be resolved to a real
-device ID or Spotify marks it restricted.
+device ID or Spotify marks it restricted. `GET /v1/target/verify` is the stricter setup/QA gate for
+live control proofs: it returns 409 unless the stored target is resolved, unrestricted, active,
+volume-controllable, and not at zero volume.
 
 Control examples:
 
@@ -622,6 +625,8 @@ attempts, while `target_readiness.ready_for_live_control` is the stricter prefli
 playback/volume tests: the target must be resolved, unrestricted, active, volume-controllable, and
 not sitting at zero volume. The same block includes `active`, `volume_control_supported`,
 `muted_or_zero_volume`, and `last_update_at` fields for setup and QA surfaces.
+`GET /v1/target/verify` uses the same strict readiness rule and returns 409 with the readiness block
+when setup should refuse a live command proof.
 Successful REST control and target-device changes also stamp a `last_command` pulse into `status`,
 forcing a retained status update even if Spotify's playback state has not settled into a new
 snapshot yet. Successful pulses include `ok:true`; failed MQTT command pulses include `ok:false` and

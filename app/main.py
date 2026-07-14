@@ -1074,6 +1074,42 @@ async def get_target(
     }
 
 
+@app.get("/v1/target/verify")
+async def verify_target_for_live_control(
+    client: Annotated[SpotifyClient, Depends(spotify_client)] = spotify,
+    state_store: Annotated[RuntimeStore, Depends(runtime_store)] = store,
+) -> dict[str, Any]:
+    target = state_store.get_target_device()
+    if target is None:
+        readiness = target_device_readiness_from_devices(None, None, checked_at=datetime.now(UTC).isoformat())
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "No target device is configured for live control.", "readiness": readiness},
+        )
+    if not client.spotify_configured:
+        readiness = target_device_readiness_from_devices(target, None, checked_at=datetime.now(UTC).isoformat())
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "Spotify credentials are required to verify a live target.", "readiness": readiness},
+        )
+
+    try:
+        readiness = await target_device_readiness(client, target, refresh=True)
+    except Exception as exc:
+        raise translate_spotify_error(exc) from exc
+    if not readiness.get("ready_for_live_control", False):
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "Target device is not ready for live control.", "readiness": readiness},
+        )
+    return {
+        "ok": True,
+        "target": target.model_dump(mode="json"),
+        "resolved_device_id": explicit_device_id(readiness.get("resolved_device_id")),
+        "readiness": readiness,
+    }
+
+
 @app.get("/v1/knob/snapshot")
 async def get_knob_snapshot(
     request: Request,

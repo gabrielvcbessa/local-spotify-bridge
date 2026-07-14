@@ -16,6 +16,7 @@ class FakeSpotifyClient:
 class FakeCommandSpotifyClient:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str | None]] = []
+        self.spotify_configured = True
         self.device_items: list[dict] = [
             {"id": "speaker-1", "name": "Speaker 1", "is_active": True, "supports_volume": True},
             {"id": "speaker-2", "name": "Speaker 2", "is_active": False, "supports_volume": False},
@@ -884,6 +885,56 @@ def test_target_device_readiness_reports_zero_volume_risk():
     assert readiness["ready_for_live_control"] is False
     assert readiness["muted_or_zero_volume"] is True
     assert readiness["risks"] == ["zero_volume"]
+
+
+@pytest.mark.asyncio
+async def test_verify_target_for_live_control_accepts_ready_target():
+    client = FakeCommandSpotifyClient()
+    target = main.TargetDevice(device_id="speaker-1")
+
+    class Store:
+        def get_target_device(self):
+            return target
+
+    response = await main.verify_target_for_live_control(client=client, state_store=Store())
+
+    assert response["ok"] is True
+    assert response["resolved_device_id"] == "speaker-1"
+    assert response["readiness"]["ready_for_live_control"] is True
+    assert response["readiness"]["risks"] == []
+
+
+@pytest.mark.asyncio
+async def test_verify_target_for_live_control_refuses_unready_target():
+    client = FakeCommandSpotifyClient()
+    target = main.TargetDevice(device_id="speaker-2")
+
+    class Store:
+        def get_target_device(self):
+            return target
+
+    with pytest.raises(main.HTTPException) as exc:
+        await main.verify_target_for_live_control(client=client, state_store=Store())
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["readiness"]["safe_for_live_control"] is True
+    assert exc.value.detail["readiness"]["ready_for_live_control"] is False
+    assert exc.value.detail["readiness"]["risks"] == ["inactive_device", "volume_unavailable"]
+
+
+@pytest.mark.asyncio
+async def test_verify_target_for_live_control_requires_configured_target():
+    client = FakeCommandSpotifyClient()
+
+    class Store:
+        def get_target_device(self):
+            return None
+
+    with pytest.raises(main.HTTPException) as exc:
+        await main.verify_target_for_live_control(client=client, state_store=Store())
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["readiness"]["risks"] == ["target_not_configured"]
 
 
 @pytest.mark.asyncio
