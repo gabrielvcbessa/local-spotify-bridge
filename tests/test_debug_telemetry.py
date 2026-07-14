@@ -126,6 +126,10 @@ def test_health_exposes_consumer_detection_and_current_polling_thresholds():
     assert payload["mqtt_protocol"]["schema_version"] == 2
     assert payload["backend_capabilities"]["backend"] == "local_spotify_bridge"
     assert payload["backend_capabilities"]["transport"] == "spotify_web_api"
+    assert payload["backend_capabilities"]["architecture"]["role"] == "lan_spotify_web_api_proxy"
+    assert payload["backend_capabilities"]["architecture"]["recommended_client_transport"] == "mqtt"
+    assert payload["backend_capabilities"]["architecture"]["direct_spotify_bridge_proxy"] is True
+    assert payload["backend_capabilities"]["architecture"]["direct_spotify_on_device"] is False
     assert payload["backend_capabilities"]["library"]["recent_tracks"] is True
     assert payload["backend_capabilities"]["devices"]["readiness"] is True
     assert payload["backend_capabilities"]["art"]["rgb565"] is True

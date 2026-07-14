@@ -725,13 +725,15 @@ def debug_dashboard_html() -> str:
       const library = capabilities.library || {};
       const devices = capabilities.devices || {};
       const art = capabilities.art || {};
+      const architecture = capabilities.architecture || {};
       document.getElementById("backendContract").textContent = capabilities.backend || "-";
       document.getElementById("backendContract").className = "metric " + (capabilities.backend ? "ok" : "warn");
       document.getElementById("backendContractDetail").textContent =
-        "transport " + (capabilities.transport || "-") + ", schema " + (protocol.schema_version || "-");
+        "transport " + (capabilities.transport || "-") + ", schema " + (protocol.schema_version || "-") +
+        ", role " + (architecture.role || "-");
       document.getElementById("backendContractMeta").textContent =
         "library recent " + yesNo(library.recent_tracks) + ", devices readiness " + yesNo(devices.readiness) +
-        ", RGB565 art " + yesNo(art.rgb565);
+        ", RGB565 art " + yesNo(art.rgb565) + ", on-device direct Spotify " + yesNo(architecture.direct_spotify_on_device);
       const idle = health.consumer_idle_explanation || {};
       const idleAge = idle.mqtt_last_activity_age_seconds == null ? "no MQTT activity" : Math.round(idle.mqtt_last_activity_age_seconds) + "s ago";
       document.getElementById("consumerReason").textContent = idle.reason || "-";

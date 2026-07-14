@@ -44,6 +44,15 @@ MQTT_KNOB_REQUESTS = ["library_root", "library_page", "library_playlists", "devi
 MQTT_KNOB_BACKEND_CAPABILITIES: dict[str, Any] = {
     "backend": "local_spotify_bridge",
     "transport": "spotify_web_api",
+    "architecture": {
+        "role": "lan_spotify_web_api_proxy",
+        "recommended_client_transport": "mqtt",
+        "direct_spotify_on_device": False,
+        "direct_spotify_bridge_proxy": True,
+        "direct_spotify_on_device_blocker": "requires_browser_pairing_and_token_storage_hardening",
+        "oauth_owner": "local_bridge",
+        "token_storage": "bridge_runtime_or_environment",
+    },
     "runtime_states": [
         "configured",
         "connecting",

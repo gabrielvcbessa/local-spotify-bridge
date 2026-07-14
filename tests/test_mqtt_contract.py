@@ -46,6 +46,13 @@ def test_mqtt_knob_config_payload_advertises_protocol_and_topics():
     assert payload["art"]["topics"]["current"] == "rotary/knob/art/current/rgb565"
     assert payload["capabilities"] == MQTT_KNOB_BACKEND_CAPABILITIES
     assert payload["capabilities"]["transport"] == "spotify_web_api"
+    assert payload["capabilities"]["architecture"]["role"] == "lan_spotify_web_api_proxy"
+    assert payload["capabilities"]["architecture"]["direct_spotify_bridge_proxy"] is True
+    assert payload["capabilities"]["architecture"]["direct_spotify_on_device"] is False
+    assert (
+        payload["capabilities"]["architecture"]["direct_spotify_on_device_blocker"]
+        == "requires_browser_pairing_and_token_storage_hardening"
+    )
     assert payload["capabilities"]["devices"]["readiness"] is True
     assert "status_command_ok" in payload["protocol"]["features"]
     assert "status_command_error" in payload["protocol"]["features"]

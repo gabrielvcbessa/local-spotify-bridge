@@ -597,7 +597,10 @@ fails, state still publishes and the HTTP art endpoint remains the source of tru
 The retained `config` message advertises the active topics, HTTP base URL, art recipe, QoS,
 supported commands/requests, and backend `capabilities`. The capabilities block is the static
 contract that tells constrained clients which backend owns playback, devices, library browsing,
-target readiness, and RGB565 art. Config also includes a `protocol` block:
+target readiness, and RGB565 art. It also includes an `architecture` block that makes the boundary
+explicit: the bridge is the LAN Spotify Web API proxy and OAuth/token owner, MQTT is the recommended
+client transport, and direct Spotify on-device is advertised as blocked until browser pairing and
+token-storage hardening are solved. Config also includes a `protocol` block:
 
 ```json
 {
