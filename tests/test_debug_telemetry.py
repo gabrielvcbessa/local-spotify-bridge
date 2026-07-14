@@ -268,6 +268,41 @@ def test_health_explains_idle_decision_and_retained_payloads(monkeypatch):
     assert payload["mqtt_retained"][0]["topic_key"] == "state"
 
 
+def test_health_explains_recent_mqtt_command_and_request_activity(monkeypatch):
+    previous_enabled = main.settings.mqtt_enabled
+    previous_activity = main.broker.last_mqtt_activity
+    previous_activity_at = main.broker.last_mqtt_activity_at
+    try:
+        monkeypatch.setattr(main.settings, "mqtt_enabled", True)
+        main.broker.mark_mqtt_activity(source="command", payload={"type": "pause", "request_id": "knob-pause-1"})
+
+        response = TestClient(app).get("/health")
+
+        assert response.status_code == 200
+        payload = response.json()
+        idle = payload["consumer_idle_explanation"]
+        assert idle["active"] is True
+        assert idle["reason"] == "recent_mqtt_command_activity"
+        assert idle["mqtt_active"] is True
+        assert idle["mqtt_last_activity_source"] == "command"
+
+        main.broker.mark_mqtt_activity(source="request", payload={"type": "library_page", "request_id": "knob-list-1"})
+
+        response = TestClient(app).get("/health")
+
+        assert response.status_code == 200
+        payload = response.json()
+        idle = payload["consumer_idle_explanation"]
+        assert idle["active"] is True
+        assert idle["reason"] == "recent_mqtt_request_activity"
+        assert idle["mqtt_active"] is True
+        assert idle["mqtt_last_activity_source"] == "request"
+    finally:
+        monkeypatch.setattr(main.settings, "mqtt_enabled", previous_enabled)
+        main.broker.last_mqtt_activity = previous_activity
+        main.broker.last_mqtt_activity_at = previous_activity_at
+
+
 def test_debug_dashboard_serves_html():
     response = TestClient(app).get("/debug")
 

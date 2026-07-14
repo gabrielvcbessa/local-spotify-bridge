@@ -61,7 +61,15 @@ def consumer_idle_explanation(consumer_status: dict[str, Any]) -> dict[str, Any]
     elif offline:
         reason = "mqtt_availability_offline"
     elif consumer_status.get("mqtt_active"):
-        reason = "recent_mqtt_activity"
+        source = last_activity.get("source") if isinstance(last_activity, dict) else None
+        if source == "command":
+            reason = "recent_mqtt_command_activity"
+        elif source == "request":
+            reason = "recent_mqtt_request_activity"
+        elif source == "availability":
+            reason = "recent_mqtt_availability"
+        else:
+            reason = "recent_mqtt_activity"
     elif last_activity_at is None:
         reason = "no_websocket_or_mqtt_activity"
     elif mqtt_age_seconds is None:
