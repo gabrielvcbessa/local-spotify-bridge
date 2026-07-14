@@ -1069,7 +1069,7 @@ async def set_target(
                 client,
                 follow_up_delays=settings.command_followup_refresh_delays_for("transfer"),
             )
-            await refresh_devices_and_publish(client)
+            await refresh_devices_after_successful_command(client)
         else:
             if client.spotify_configured:
                 await refresh_devices_and_publish(client)
@@ -1158,7 +1158,7 @@ async def transfer_playback(
         store.set_target_device(TargetDevice(device_id=command.device_id))
         await publish_mqtt_status(command_type="transfer", command_ok=True)
         await refresh_after_successful_command(client, follow_up_delays=settings.command_followup_refresh_delays_for("transfer"))
-        await refresh_devices_and_publish(client)
+        await refresh_devices_after_successful_command(client)
     except HTTPException:
         raise
     except Exception as exc:
@@ -1529,6 +1529,13 @@ async def refresh_after_successful_command(
 ) -> None:
     try:
         await refresh_and_publish(client, follow_up_delays=follow_up_delays)
+    except Exception as exc:
+        broker.mark_spotify_error(exc)
+
+
+async def refresh_devices_after_successful_command(client: SpotifyClient) -> None:
+    try:
+        await refresh_devices_and_publish(client)
     except Exception as exc:
         broker.mark_spotify_error(exc)
 
@@ -2211,7 +2218,7 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
             command_ok=True,
         )
         if command_policy.refresh_devices:
-            await refresh_devices_and_publish(spotify)
+            await refresh_devices_after_successful_command(spotify)
         await refresh_after_successful_command(
             spotify,
             follow_up_delays=settings.command_followup_refresh_delays_for(command_type) if command_policy.follow_up_refresh else (),

@@ -371,6 +371,43 @@ async def test_mqtt_transfer_refreshes_devices_and_state(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_mqtt_transfer_success_survives_device_refresh_failure(monkeypatch):
+    client = FakeCommandSpotifyClient()
+    status_pulses = []
+    previous_error = main.broker.last_spotify_error
+
+    async def fake_refresh_devices_and_publish(_client):
+        raise RuntimeError("devices unavailable")
+
+    async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
+        return None
+
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None):
+        status_pulses.append((command_type, command_request_id, command_pending, command_ok))
+
+    monkeypatch.setattr(main, "spotify", client)
+    monkeypatch.setattr(main, "refresh_devices_and_publish", fake_refresh_devices_and_publish)
+    monkeypatch.setattr(main, "refresh_and_publish", fake_refresh_and_publish)
+    monkeypatch.setattr(main, "publish_mqtt_status", fake_publish_mqtt_status)
+    monkeypatch.setattr(main.store, "set_target_device", lambda _target: None)
+
+    try:
+        result = await main.handle_mqtt_command(
+            {"request_id": "knob-transfer-device-refresh-fail", "type": "transfer", "device_id": "speaker-1", "set_target": True}
+        )
+        assert main.broker.last_spotify_error == "devices unavailable"
+    finally:
+        main.broker.last_spotify_error = previous_error
+
+    assert result["published_state"] is True
+    assert client.calls == [("transfer", "speaker-1")]
+    assert status_pulses == [
+        ("transfer", "knob-transfer-device-refresh-fail", True, None),
+        ("transfer", "knob-transfer-device-refresh-fail", False, True),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_mqtt_command_success_status_publishes_before_state_refresh(monkeypatch):
     client = FakeCommandSpotifyClient()
     events = []
@@ -696,6 +733,38 @@ async def test_rest_transfer_paths_use_transfer_follow_up_profile(monkeypatch):
         ("refresh", main.settings.command_followup_refresh_delays_for("transfer")),
         ("devices", client),
     ]
+
+
+@pytest.mark.asyncio
+async def test_rest_transfer_success_survives_device_refresh_failure(monkeypatch):
+    client = FakeCommandSpotifyClient()
+    status_pulses = []
+    previous_error = main.broker.last_spotify_error
+    targets = []
+
+    async def fake_refresh_devices_and_publish(_client):
+        raise RuntimeError("rest devices unavailable")
+
+    async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
+        return None
+
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None):
+        status_pulses.append((command_type, command_request_id, command_pending, command_ok))
+
+    monkeypatch.setattr(main, "refresh_devices_and_publish", fake_refresh_devices_and_publish)
+    monkeypatch.setattr(main, "refresh_and_publish", fake_refresh_and_publish)
+    monkeypatch.setattr(main.store, "set_target_device", lambda target: targets.append(target))
+    monkeypatch.setattr(main, "publish_mqtt_status", fake_publish_mqtt_status)
+
+    try:
+        await main.transfer_playback(TransferPlaybackCommand(device_id="speaker-1"), client=client)
+        assert main.broker.last_spotify_error == "rest devices unavailable"
+    finally:
+        main.broker.last_spotify_error = previous_error
+
+    assert client.calls == [("transfer", "speaker-1")]
+    assert [target.device_id for target in targets] == ["speaker-1"]
+    assert status_pulses == [("transfer", None, None, True)]
 
 
 @pytest.mark.asyncio
