@@ -14,6 +14,8 @@ from typing import Any
 
 
 EXPECTED_PLAYBACK_READY_CONTRACT = "resolved_unrestricted_active_target"
+EXPECTED_PROFILE_MODEL = "profile_registry"
+EXPECTED_PROFILE_SELECTION_TRANSPORT = "bridge_profile_registry"
 VALID_BUILD_SOURCES = {"environment", "git"}
 
 
@@ -56,6 +58,17 @@ def readiness_contract(payload: dict[str, Any], *, source: str) -> dict[str, Any
     return contract if isinstance(contract, dict) else {}
 
 
+def architecture_contract(payload: dict[str, Any], *, source: str) -> dict[str, Any]:
+    if source == "health":
+        capabilities = payload.get("backend_capabilities", {})
+    elif source == "config":
+        capabilities = payload.get("capabilities", {})
+    else:
+        raise ValueError(f"unknown source {source!r}")
+    architecture = capabilities.get("architecture") if isinstance(capabilities, dict) else None
+    return architecture if isinstance(architecture, dict) else {}
+
+
 def validate_build(
     payload: dict[str, Any],
     *,
@@ -88,6 +101,33 @@ def validate_build(
 
 def validate_contract(payload: dict[str, Any], *, label: str, source: str) -> list[str]:
     failures: list[str] = []
+    architecture = architecture_contract(payload, source=source)
+    profile_model = architecture.get("profile_model")
+    if profile_model != EXPECTED_PROFILE_MODEL:
+        failures.append(f"{label} architecture.profile_model {profile_model!r} != {EXPECTED_PROFILE_MODEL!r}")
+    if architecture.get("multi_profile_selection") is not True:
+        failures.append(f"{label} architecture.multi_profile_selection is not true")
+    blocker = architecture.get("multi_profile_selection_blocker")
+    if blocker:
+        failures.append(f"{label} architecture.multi_profile_selection_blocker must be empty, got {blocker!r}")
+    registry = architecture.get("profile_registry")
+    if not isinstance(registry, dict):
+        failures.append(f"{label} architecture.profile_registry missing")
+    else:
+        active_profile_id = registry.get("active_profile_id")
+        profiles = registry.get("profiles")
+        if not active_profile_id:
+            failures.append(f"{label} architecture.profile_registry.active_profile_id missing")
+        if not isinstance(profiles, list) or not profiles:
+            failures.append(f"{label} architecture.profile_registry.profiles missing")
+        elif not any(isinstance(profile, dict) and profile.get("id") == active_profile_id for profile in profiles):
+            failures.append(f"{label} architecture.profile_registry.active_profile_id has no matching profile")
+        if registry.get("selection_transport") != EXPECTED_PROFILE_SELECTION_TRANSPORT:
+            failures.append(
+                f"{label} architecture.profile_registry.selection_transport "
+                f"{registry.get('selection_transport')!r} != {EXPECTED_PROFILE_SELECTION_TRANSPORT!r}"
+            )
+
     contract = readiness_contract(payload, source=source)
     playback_ready = contract.get("playback_ready_for_live_control")
     if playback_ready != EXPECTED_PLAYBACK_READY_CONTRACT:
