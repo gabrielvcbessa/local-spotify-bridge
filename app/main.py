@@ -1634,6 +1634,7 @@ def mqtt_status_payload(
     command_request_id: str | None = None,
     command_pending: bool | None = None,
     command_ok: bool | None = None,
+    command_error: str | None = None,
 ) -> dict[str, Any]:
     command_pulse = None
     if command_type:
@@ -1645,6 +1646,8 @@ def mqtt_status_payload(
             command_pulse["request_id"] = command_request_id
         if command_ok is not None:
             command_pulse["ok"] = command_ok
+        if command_error:
+            command_pulse["error"] = command_error
     spotify_configured = bool(getattr(spotify, "spotify_configured", False))
     return status_payload(
         version=broker.version,
@@ -1665,6 +1668,7 @@ async def publish_mqtt_status(
     command_request_id: str | None = None,
     command_pending: bool | None = None,
     command_ok: bool | None = None,
+    command_error: str | None = None,
 ) -> None:
     await broker.publish_mqtt_retained(
         "status",
@@ -1673,6 +1677,7 @@ async def publish_mqtt_status(
             command_request_id=command_request_id,
             command_pending=command_pending,
             command_ok=command_ok,
+            command_error=command_error,
         ),
     )
 
@@ -2228,12 +2233,13 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
             "published_state": True,
             "playback_affecting": command_policy.playback_affecting,
         }
-    except Exception:
+    except Exception as exc:
         await publish_mqtt_status(
             command_type=command_type,
             command_request_id=request_id,
             command_pending=False,
             command_ok=False,
+            command_error=str(exc),
         )
         raise
 

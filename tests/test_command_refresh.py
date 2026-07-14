@@ -159,7 +159,7 @@ async def test_mqtt_knob_snapshot_publishes_control_state(monkeypatch):
     async def fake_publish_mqtt_art_payloads(_client, _state, _options):
         return None
 
-    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None):
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None):
         _ = (command_type, command_request_id, command_pending, command_ok)
         return None
 
@@ -296,7 +296,7 @@ async def test_mqtt_next_previous_do_not_use_implicit_target_device(monkeypatch)
     async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
         refreshes.append(tuple(follow_up_delays))
 
-    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None):
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None):
         status_pulses.append((command_type, command_request_id, command_pending, command_ok))
 
     monkeypatch.setattr(main, "spotify", client)
@@ -344,7 +344,7 @@ async def test_mqtt_transfer_refreshes_devices_and_state(monkeypatch):
         device_refreshes.append(True)
         return {"items": []}
 
-    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None):
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None):
         events.append(("status", command_type, command_request_id, command_pending, command_ok))
         status_pulses.append((command_type, command_request_id, command_pending, command_ok))
 
@@ -382,7 +382,7 @@ async def test_mqtt_transfer_success_survives_device_refresh_failure(monkeypatch
     async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
         return None
 
-    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None):
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None):
         status_pulses.append((command_type, command_request_id, command_pending, command_ok))
 
     monkeypatch.setattr(main, "spotify", client)
@@ -415,7 +415,7 @@ async def test_mqtt_command_success_status_publishes_before_state_refresh(monkey
     async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
         events.append(("refresh", tuple(follow_up_delays)))
 
-    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None):
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None):
         events.append(("status", command_type, command_request_id, command_pending, command_ok))
 
     monkeypatch.setattr(main, "spotify", client)
@@ -440,7 +440,7 @@ async def test_mqtt_command_success_survives_refresh_failure(monkeypatch):
     async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
         raise RuntimeError("refresh unavailable")
 
-    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None):
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None):
         status_pulses.append((command_type, command_request_id, command_pending, command_ok))
 
     monkeypatch.setattr(main, "spotify", client)
@@ -470,7 +470,7 @@ async def test_mqtt_save_track_uses_payload_track_uri_and_publishes_status(monke
     async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
         refreshes.append(tuple(follow_up_delays))
 
-    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None):
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None):
         status_pulses.append((command_type, command_request_id, command_pending, command_ok))
 
     monkeypatch.setattr(main, "spotify", client)
@@ -502,7 +502,7 @@ async def test_mqtt_unsave_track_falls_back_to_current_state(monkeypatch):
     async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
         refreshes.append(tuple(follow_up_delays))
 
-    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None):
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None):
         status_pulses.append((command_type, command_request_id, command_pending, command_ok))
 
     monkeypatch.setattr(main, "spotify", client)
@@ -531,7 +531,7 @@ async def test_mqtt_play_pause_does_not_use_implicit_target_device(monkeypatch):
     async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
         refreshes.append(tuple(follow_up_delays))
 
-    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None):
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None):
         _ = (command_type, command_request_id, command_pending, command_ok)
         return None
 
@@ -574,7 +574,7 @@ async def test_rest_controls_use_command_specific_follow_up_profiles(monkeypatch
     async def fake_command_device_id(_client, device_id):
         return device_id
 
-    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None):
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None):
         _ = (command_pending, command_ok)
         events.append(("status", command_type, command_request_id))
         status_pulses.append((command_type, command_request_id))
@@ -624,7 +624,7 @@ async def test_rest_seek_and_volume_publish_status_before_refresh(monkeypatch):
     async def fake_command_device_id(_client, device_id):
         return device_id
 
-    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None):
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None):
         _ = (command_request_id, command_pending)
         events.append(("status", command_type, command_ok))
 
@@ -656,7 +656,7 @@ async def test_rest_control_success_survives_refresh_failure(monkeypatch):
     async def fake_command_device_id(_client, device_id):
         return device_id
 
-    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None):
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None):
         status_pulses.append((command_type, command_request_id, command_pending, command_ok))
 
     monkeypatch.setattr(main, "refresh_and_publish", fake_refresh_and_publish)
@@ -694,7 +694,7 @@ async def test_rest_transfer_paths_use_transfer_follow_up_profile(monkeypatch):
     async def fake_resolve_target_device_id(*_args, **_kwargs):
         return "speaker-1"
 
-    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None):
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None):
         _ = (command_pending, command_ok)
         events.append(("status", command_type, command_request_id))
         status_pulses.append((command_type, command_request_id))
@@ -748,7 +748,7 @@ async def test_rest_transfer_success_survives_device_refresh_failure(monkeypatch
     async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
         return None
 
-    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None):
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None):
         status_pulses.append((command_type, command_request_id, command_pending, command_ok))
 
     monkeypatch.setattr(main, "refresh_devices_and_publish", fake_refresh_devices_and_publish)
@@ -776,7 +776,7 @@ async def test_rest_set_target_refreshes_devices_before_status(monkeypatch):
         events.append(("devices", _client))
         return {"items": []}
 
-    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None):
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None):
         _ = (command_request_id, command_pending)
         events.append(("status", command_type))
 
@@ -881,8 +881,8 @@ async def test_mqtt_transfer_refuses_unsafe_target(monkeypatch):
     client.device_items = []
     status_pulses = []
 
-    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None):
-        status_pulses.append((command_type, command_request_id, command_pending, command_ok))
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None):
+        status_pulses.append((command_type, command_request_id, command_pending, command_ok, command_error))
 
     monkeypatch.setattr(main, "spotify", client)
     monkeypatch.setattr(main, "publish_mqtt_status", fake_publish_mqtt_status)
@@ -892,8 +892,14 @@ async def test_mqtt_transfer_refuses_unsafe_target(monkeypatch):
 
     assert client.calls == []
     assert status_pulses == [
-        ("transfer", "knob-transfer-fail", True, None),
-        ("transfer", "knob-transfer-fail", False, False),
+        ("transfer", "knob-transfer-fail", True, None, None),
+        (
+            "transfer",
+            "knob-transfer-fail",
+            False,
+            False,
+            "transfer target is not safe for live control: target_not_found,missing_device_id",
+        ),
     ]
 
 
@@ -902,7 +908,7 @@ async def test_rest_target_changes_publish_status_pulse(monkeypatch):
     status_pulses = []
     targets = []
 
-    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None):
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None):
         _ = command_pending
         status_pulses.append((command_type, command_request_id, command_ok))
 

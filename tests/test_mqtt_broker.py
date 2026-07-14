@@ -325,11 +325,17 @@ def test_mqtt_status_payload_preserves_command_outcome():
         current_state=PlaybackSnapshot(device_id="speaker-1"),
         target=None,
         mqtt_connected=True,
-        command_pulse={"type": "transfer", "request_id": "knob-transfer-1", "ok": False},
+        command_pulse={
+            "type": "transfer",
+            "request_id": "knob-transfer-1",
+            "ok": False,
+            "error": "target device is not safe",
+        },
     )
 
     assert success["last_command"]["ok"] is True
     assert failure["last_command"]["ok"] is False
+    assert failure["last_command"]["error"] == "target device is not safe"
 
 
 def test_mqtt_status_payload_exposes_pending_command_runtime_state():
