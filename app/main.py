@@ -2233,6 +2233,7 @@ def target_device_readiness_from_devices(
             "resolved_device_id": None,
             "safe_for_live_control": False,
             "ready_for_live_control": False,
+            "playback_ready_for_live_control": False,
             "active": False,
             "restricted": False,
             "volume_control_supported": False,
@@ -2248,6 +2249,7 @@ def target_device_readiness_from_devices(
             "resolved_device_id": None,
             "safe_for_live_control": False,
             "ready_for_live_control": False,
+            "playback_ready_for_live_control": False,
             "active": False,
             "restricted": False,
             "volume_control_supported": False,
@@ -2274,6 +2276,7 @@ def target_device_readiness_from_devices(
         risks.append("zero_volume")
 
     safe_for_live_control = bool(device_id) and "restricted_device" not in risks
+    playback_ready_for_live_control = safe_for_live_control and "inactive_device" not in risks
     ready_for_live_control = safe_for_live_control and not any(
         risk in risks for risk in ("inactive_device", "volume_unavailable", "zero_volume")
     )
@@ -2285,6 +2288,7 @@ def target_device_readiness_from_devices(
         "resolved_device_id": device_id if isinstance(device_id, str) else None,
         "safe_for_live_control": safe_for_live_control,
         "ready_for_live_control": ready_for_live_control,
+        "playback_ready_for_live_control": playback_ready_for_live_control,
         "active": bool(device.get("is_active")) if isinstance(device, dict) else False,
         "restricted": bool(device.get("is_restricted")) if isinstance(device, dict) else False,
         "volume_control_supported": bool(device.get("supports_volume")) if isinstance(device, dict) else False,
@@ -2322,13 +2326,13 @@ def active_playback_fallback_readiness(
         return None
     target_readiness = target_device_readiness_from_devices(target, devices, checked_at=checked_at)
     risks = target_readiness.get("risks", [])
-    if risks != ["inactive_device"]:
+    if "inactive_device" not in risks or any(risk in risks for risk in ("target_not_found", "missing_device_id", "restricted_device")):
         return None
     active_device = active_device_from_list(devices)
     active_id = active_device.get("id") if isinstance(active_device, dict) else None
     if not isinstance(active_id, str) or not active_id:
         return None
-    if active_device.get("is_restricted") or not active_device.get("supports_volume") or active_device.get("volume_percent") == 0:
+    if active_device.get("is_restricted"):
         return None
     fallback_target = TargetDevice(device_id=active_id, device_name=active_device.get("name") if isinstance(active_device.get("name"), str) else None)
     readiness = target_device_readiness_from_devices(fallback_target, devices, checked_at=checked_at)
@@ -2364,7 +2368,7 @@ async def effective_live_control_device_id(client: SpotifyClient, target: Target
     if readiness.get("ready_for_live_control", False):
         return explicit_device_id(readiness.get("resolved_device_id"))
     fallback = active_playback_fallback_readiness(target, devices, checked_at=checked_at)
-    if fallback is None or not fallback.get("ready_for_live_control", False):
+    if fallback is None or not fallback.get("playback_ready_for_live_control", False):
         raise TargetNotReadyForLiveControl(command_type, readiness)
     resolved_device_id = explicit_device_id(fallback.get("resolved_device_id"))
     if resolved_device_id:

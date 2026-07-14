@@ -97,6 +97,7 @@ MQTT_KNOB_BACKEND_CAPABILITIES: dict[str, Any] = {
         "readiness_contract": {
             "safe_for_live_control": "resolved_unrestricted_target",
             "ready_for_live_control": "resolved_unrestricted_active_volume_controllable_nonzero_target",
+            "playback_ready_for_live_control": "resolved_unrestricted_active_target",
             "risk_taxonomy": [
                 "target_not_configured",
                 "devices_not_cached",

@@ -71,6 +71,7 @@ def test_mqtt_knob_config_payload_advertises_protocol_and_topics():
     readiness_contract = payload["capabilities"]["devices"]["readiness_contract"]
     assert readiness_contract["safe_for_live_control"] == "resolved_unrestricted_target"
     assert readiness_contract["ready_for_live_control"] == "resolved_unrestricted_active_volume_controllable_nonzero_target"
+    assert readiness_contract["playback_ready_for_live_control"] == "resolved_unrestricted_active_target"
     assert "zero_volume" in readiness_contract["risk_taxonomy"]
     assert "volume_unavailable" in readiness_contract["risk_taxonomy"]
     assert readiness_contract["muted_or_zero_volume_field"] is True

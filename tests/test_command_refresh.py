@@ -1383,6 +1383,38 @@ def test_mqtt_status_payload_uses_active_playback_when_configured_target_is_stal
     assert payload["target_readiness"]["configured_target"] == {"device_id": "speaker-2", "device_name": None}
     assert payload["target_readiness"]["resolved_device_id"] == "speaker-1"
     assert payload["target_readiness"]["ready_for_live_control"] is True
+    assert payload["target_readiness"]["playback_ready_for_live_control"] is True
+
+
+def test_mqtt_status_payload_keeps_active_playback_ready_without_volume_support(monkeypatch):
+    previous_cached = main.cached_devices
+    previous_target = main.store.get_target_device()
+    previous_state = main.broker.current_state
+    previous_spotify = main.spotify
+    main.cached_devices = [
+        {"id": "phone-1", "name": "Phone", "is_active": True, "supports_volume": False, "volume_percent": None},
+        {"id": "speaker-2", "name": "Speaker 2", "is_active": False, "supports_volume": True, "volume_percent": 40},
+    ]
+    main.broker.current_state = PlaybackSnapshot(is_playing=True, device_id="phone-1")
+    monkeypatch.setattr(main, "spotify", FakeCommandSpotifyClient())
+    monkeypatch.setattr(main.store, "get_target_device", lambda: main.TargetDevice(device_id="speaker-2"))
+    try:
+        payload = main.mqtt_status_payload()
+    finally:
+        main.cached_devices = previous_cached
+        main.broker.current_state = previous_state
+        monkeypatch.setattr(main, "spotify", previous_spotify)
+        monkeypatch.setattr(main.store, "get_target_device", lambda: previous_target)
+
+    assert payload["status"] == "ready"
+    assert payload["target"]["device_id"] == "phone-1"
+    assert payload["runtime"]["target_ready"] is True
+    assert payload["runtime"]["target_playback_ready"] is True
+    assert payload["target_readiness"]["source"] == "active_playback_fallback"
+    assert payload["target_readiness"]["ready_for_live_control"] is False
+    assert payload["target_readiness"]["playback_ready_for_live_control"] is True
+    assert payload["target_readiness"]["volume_control_supported"] is False
+    assert payload["target_readiness"]["risks"] == ["volume_unavailable"]
 
 
 def test_target_device_readiness_reports_zero_volume_risk():
@@ -1451,6 +1483,10 @@ async def test_verify_target_for_live_control_requires_configured_target():
 @pytest.mark.asyncio
 async def test_rest_play_refuses_configured_target_that_is_not_ready(monkeypatch):
     client = FakeCommandSpotifyClient()
+    client.device_items = [
+        {"id": "speaker-1", "name": "Speaker 1", "is_active": False, "supports_volume": True},
+        {"id": "speaker-2", "name": "Speaker 2", "is_active": False, "supports_volume": False},
+    ]
     status_pulses = []
 
     async def fake_publish_mqtt_status(
@@ -1482,6 +1518,10 @@ async def test_rest_play_refuses_configured_target_that_is_not_ready(monkeypatch
 @pytest.mark.asyncio
 async def test_rest_seek_refuses_configured_target_that_is_not_ready(monkeypatch):
     client = FakeCommandSpotifyClient()
+    client.device_items = [
+        {"id": "speaker-1", "name": "Speaker 1", "is_active": False, "supports_volume": True},
+        {"id": "speaker-2", "name": "Speaker 2", "is_active": False, "supports_volume": False},
+    ]
 
     monkeypatch.setattr(main.store, "get_target_device", lambda: main.TargetDevice(device_id="speaker-2"))
 
@@ -1539,6 +1579,10 @@ async def test_mqtt_transfer_refuses_unsafe_target(monkeypatch):
 @pytest.mark.asyncio
 async def test_mqtt_next_refuses_configured_target_that_is_not_ready(monkeypatch):
     client = FakeCommandSpotifyClient()
+    client.device_items = [
+        {"id": "speaker-1", "name": "Speaker 1", "is_active": False, "supports_volume": True},
+        {"id": "speaker-2", "name": "Speaker 2", "is_active": False, "supports_volume": False},
+    ]
     status_pulses = []
 
     async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None, command_metadata=None):
@@ -1609,8 +1653,40 @@ async def test_mqtt_next_uses_active_playback_when_configured_target_is_only_ina
 
 
 @pytest.mark.asyncio
+async def test_mqtt_next_uses_active_playback_without_volume_support(monkeypatch):
+    client = FakeCommandSpotifyClient()
+    client.device_items = [
+        {"id": "phone-1", "name": "Phone", "is_active": True, "supports_volume": False, "volume_percent": None},
+        {"id": "speaker-2", "name": "Speaker 2", "is_active": False, "supports_volume": True, "volume_percent": 40},
+    ]
+    refreshes = []
+    stored_targets = []
+
+    async def fake_refresh_after_successful_command(_client, *, follow_up_delays=()):
+        refreshes.append(tuple(follow_up_delays))
+        return True
+
+    monkeypatch.setattr(main, "spotify", client)
+    monkeypatch.setattr(main.store, "get_target_device", lambda: main.TargetDevice(device_id="speaker-2"))
+    monkeypatch.setattr(main.store, "set_target_device", lambda target: stored_targets.append(target))
+    monkeypatch.setattr(main, "refresh_after_successful_command", fake_refresh_after_successful_command)
+
+    result = await main.handle_mqtt_command({"request_id": "knob-next-phone", "type": "next"})
+
+    assert client.calls == [("next", "phone-1")]
+    assert stored_targets == [main.TargetDevice(device_id="phone-1", device_name="Phone")]
+    assert refreshes == [main.settings.command_followup_refresh_delays_for("next")]
+    assert result["published_state"] is True
+    assert result["queue_status_published"] is True
+
+
+@pytest.mark.asyncio
 async def test_mqtt_seek_refuses_configured_target_that_is_not_ready(monkeypatch):
     client = FakeCommandSpotifyClient()
+    client.device_items = [
+        {"id": "speaker-1", "name": "Speaker 1", "is_active": False, "supports_volume": True},
+        {"id": "speaker-2", "name": "Speaker 2", "is_active": False, "supports_volume": False},
+    ]
     status_pulses = []
 
     async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None, command_metadata=None):
@@ -1650,6 +1726,10 @@ async def test_mqtt_playback_mode_commands_refuse_configured_target_that_is_not_
     payload,
 ):
     client = FakeCommandSpotifyClient()
+    client.device_items = [
+        {"id": "speaker-1", "name": "Speaker 1", "is_active": False, "supports_volume": True},
+        {"id": "speaker-2", "name": "Speaker 2", "is_active": False, "supports_volume": False},
+    ]
     status_pulses = []
 
     async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None, command_metadata=None):
