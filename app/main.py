@@ -365,6 +365,7 @@ def debug_dashboard_html() -> str:
       background: #111820;
       font-size: 13px;
       font-weight: 650;
+      cursor: pointer;
     }
     .tab.active {
       color: #e7ecef;
@@ -385,6 +386,9 @@ def debug_dashboard_html() -> str:
     .setup-pane h3 {
       margin: 0 0 8px;
       font-size: 14px;
+    }
+    .setup-pane[hidden] {
+      display: none;
     }
     button {
       background: #22303a;
@@ -509,12 +513,12 @@ def debug_dashboard_html() -> str:
     <section class="panel" style="margin-bottom: 16px;">
       <h2>Backend Setup</h2>
       <div class="tabs" aria-label="Backend setup tabs">
-        <span class="tab active">Spotify Bridge</span>
-        <span class="tab">MQTT Knob</span>
-        <span class="tab">Diagnostics</span>
+        <button class="tab active" type="button" data-setup-tab="spotify">Spotify Bridge</button>
+        <button class="tab" type="button" data-setup-tab="mqtt">MQTT Knob</button>
+        <button class="tab" type="button" data-setup-tab="diagnostics">Diagnostics</button>
       </div>
       <div class="setup-grid">
-        <div class="setup-pane">
+        <div class="setup-pane" data-setup-pane="spotify">
           <h3>Spotify Web API</h3>
           <div class="metric" id="spotifyConnection">-</div>
           <div class="muted" id="spotifyConnectionDetail"></div>
@@ -524,17 +528,18 @@ def debug_dashboard_html() -> str:
           </div>
           <div class="muted" id="spotifyActionStatus"></div>
         </div>
-        <div class="setup-pane">
+        <div class="setup-pane" data-setup-pane="mqtt" hidden>
           <h3>Target Readiness</h3>
           <div class="metric" id="targetReadiness">-</div>
           <div class="muted" id="targetReadinessDetail"></div>
           <div class="muted" id="targetReadinessMeta"></div>
         </div>
-        <div class="setup-pane">
+        <div class="setup-pane" data-setup-pane="diagnostics" hidden>
           <h3>Backend Contract</h3>
           <div class="metric" id="backendContract">-</div>
           <div class="muted" id="backendContractDetail"></div>
           <div class="muted" id="backendContractMeta"></div>
+          <div class="muted" id="setupDiagnosticsDetail"></div>
         </div>
       </div>
     </section>
@@ -801,6 +806,11 @@ def debug_dashboard_html() -> str:
         ", RGB565 art " + yesNo(art.rgb565) + ", command device refresh " +
         yesNo(protocolFeatures.includes("command_device_refresh_result")) +
         ", on-device direct Spotify " + yesNo(architecture.direct_spotify_on_device);
+      const setupLastCommand = ((health.mqtt_commands || {}).last_command || {}).type || "-";
+      document.getElementById("setupDiagnosticsDetail").textContent =
+        "polling " + health.polling.mode + ", consumers " +
+        (health.polling.active_consumers_detected ? "active" : "idle") +
+        ", last MQTT command " + setupLastCommand;
       const idle = health.consumer_idle_explanation || {};
       const idleAge = idle.mqtt_last_activity_age_seconds == null ? "no MQTT activity" : Math.round(idle.mqtt_last_activity_age_seconds) + "s ago";
       document.getElementById("consumerReason").textContent = idle.reason || "-";
@@ -1026,9 +1036,21 @@ def debug_dashboard_html() -> str:
       await refresh();
     }
 
+    function setSetupTab(tabName) {
+      for (const tab of document.querySelectorAll("[data-setup-tab]")) {
+        tab.classList.toggle("active", tab.dataset.setupTab === tabName);
+      }
+      for (const pane of document.querySelectorAll("[data-setup-pane]")) {
+        pane.hidden = pane.dataset.setupPane !== tabName;
+      }
+    }
+
     document.getElementById("refresh").onclick = refresh;
     document.getElementById("spotifyPair").onclick = startSpotifyPairing;
     document.getElementById("spotifyDisconnect").onclick = disconnectSpotify;
+    for (const tab of document.querySelectorAll("[data-setup-tab]")) {
+      tab.onclick = () => setSetupTab(tab.dataset.setupTab);
+    }
     document.getElementById("recentPrev").onclick = () => {
       recentOffset = Math.max(0, recentOffset - recentLimit);
       loadRecent();

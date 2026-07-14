@@ -275,8 +275,15 @@ def test_debug_dashboard_serves_html():
     assert "Local Spotify Bridge Setup Console" in response.text
     assert "Backend Setup" in response.text
     assert "Backend setup tabs" in response.text
+    assert 'data-setup-tab="spotify"' in response.text
+    assert 'data-setup-tab="mqtt"' in response.text
+    assert 'data-setup-tab="diagnostics"' in response.text
+    assert 'data-setup-pane="spotify"' in response.text
+    assert 'data-setup-pane="mqtt"' in response.text
+    assert 'data-setup-pane="diagnostics"' in response.text
     assert "Spotify Bridge" in response.text
     assert "MQTT Knob" in response.text
+    assert "setSetupTab" in response.text
     assert "/v1/debug/status" in response.text
     assert "/v1/debug/events" in response.text
     assert "Last MQTT Command" in response.text
@@ -292,6 +299,7 @@ def test_debug_dashboard_serves_html():
     assert "targetReadinessMeta" in response.text
     assert "backendContractDetail" in response.text
     assert "backendContractMeta" in response.text
+    assert "setupDiagnosticsDetail" in response.text
     assert "command device refresh " in response.text
     assert "command_device_refresh_result" in response.text
     assert "/v1/auth/token" in response.text
