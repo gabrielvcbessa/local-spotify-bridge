@@ -5,6 +5,48 @@ from app.main import app
 from app.telemetry import BridgeTelemetry, telemetry
 
 
+def test_bridge_build_info_reads_baked_build_file(monkeypatch, tmp_path):
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+    main_file = app_dir / "main.py"
+    main_file.write_text("", encoding="utf-8")
+    (app_dir / "_build.json").write_text(
+        '{"commit":"image-commit","ref":"main","source":"git"}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(main, "__file__", str(main_file))
+    monkeypatch.setattr(main.settings, "bridge_build_commit", "")
+    monkeypatch.setattr(main.settings, "bridge_build_ref", "")
+    monkeypatch.setattr(main.settings, "bridge_build_source", "")
+
+    assert main.bridge_build_info() == {
+        "commit": "image-commit",
+        "ref": "main",
+        "source": "git",
+    }
+
+
+def test_bridge_build_info_prefers_environment_over_baked_file(monkeypatch, tmp_path):
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+    main_file = app_dir / "main.py"
+    main_file.write_text("", encoding="utf-8")
+    (app_dir / "_build.json").write_text(
+        '{"commit":"image-commit","ref":"main","source":"git"}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(main, "__file__", str(main_file))
+    monkeypatch.setattr(main.settings, "bridge_build_commit", "env-commit")
+    monkeypatch.setattr(main.settings, "bridge_build_ref", "deploy")
+    monkeypatch.setattr(main.settings, "bridge_build_source", "environment")
+
+    assert main.bridge_build_info() == {
+        "commit": "env-commit",
+        "ref": "deploy",
+        "source": "environment",
+    }
+
+
 def test_telemetry_summarizes_spotify_and_mqtt_by_period_and_type():
     recorder = BridgeTelemetry(max_events=100, retention_seconds=604800)
 

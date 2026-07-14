@@ -1,4 +1,5 @@
 import asyncio
+import json
 import subprocess
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -206,6 +207,15 @@ def bridge_build_info() -> dict[str, Any]:
     commit = settings.bridge_build_commit.strip()
     ref = settings.bridge_build_ref.strip()
     source = settings.bridge_build_source.strip()
+    build_file = Path(__file__).with_name("_build.json")
+    if not commit and build_file.exists():
+        try:
+            payload = json.loads(build_file.read_text(encoding="utf-8"))
+            commit = str(payload.get("commit") or "").strip()
+            ref = ref or str(payload.get("ref") or "").strip()
+            source = source or str(payload.get("source") or "").strip()
+        except (OSError, ValueError, TypeError):
+            pass
     if not commit:
         try:
             commit = subprocess.check_output(

@@ -104,8 +104,15 @@ SPOTIFY_REDIRECT_URI=http://localhost:8091/v1/auth/callback
 
 ## Deployment Stamp
 
-Stamp container deployments with the git commit so `/health` and `/v1/knob/config` prove which
-bridge build is serving the knob:
+Container deployments are stamped during the Docker build so `/health` and `/v1/knob/config`
+prove which bridge build is serving the knob:
+
+```bash
+docker compose up -d --build
+```
+
+The Dockerfile reads the current checkout's `.git/HEAD` and refs from the build context and bakes
+that metadata into the image. To override the stamp explicitly, pass build args/environment values:
 
 ```bash
 BRIDGE_BUILD_COMMIT=$(git rev-parse HEAD) \

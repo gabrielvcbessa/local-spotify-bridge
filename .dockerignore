@@ -1,5 +1,8 @@
 .env
-.git/
+.git/*
+!.git/HEAD
+!.git/refs/
+!.git/refs/**
 .venv/
 data/
 __pycache__/

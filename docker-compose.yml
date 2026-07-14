@@ -1,6 +1,11 @@
 services:
   spotify-bridge:
-    build: .
+    build:
+      context: .
+      args:
+        BRIDGE_BUILD_COMMIT: "${BRIDGE_BUILD_COMMIT:-}"
+        BRIDGE_BUILD_REF: "${BRIDGE_BUILD_REF:-}"
+        BRIDGE_BUILD_SOURCE: "${BRIDGE_BUILD_SOURCE:-}"
     env_file:
       - path: .env
         required: false
