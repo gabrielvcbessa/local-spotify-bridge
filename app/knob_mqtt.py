@@ -139,6 +139,7 @@ def status_payload(
     command_pending: bool = False,
     command_pulse: dict[str, Any] | None = None,
     target_readiness: dict[str, Any] | None = None,
+    direct_spotify: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     target_device_id = target.device_id if target else None
     target_device_name = target.device_name if target else None
@@ -193,6 +194,8 @@ def status_payload(
     }
     if target_readiness is not None:
         payload["target_readiness"] = target_readiness
+    if direct_spotify is not None:
+        payload["direct_spotify"] = direct_spotify
     if command_pulse is not None:
         payload["last_command"] = command_pulse
     hash_payload = {key: value for key, value in payload.items() if key != "last_poll_at"}

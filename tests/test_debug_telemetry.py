@@ -114,6 +114,13 @@ def test_health_exposes_consumer_detection_and_current_polling_thresholds():
     assert response.status_code == 200
     payload = response.json()
     assert payload["spotify_refresh_token_source"] in {"runtime", "environment", "none"}
+    assert payload["direct_spotify"]["transport"] == "spotify_web_api"
+    assert payload["direct_spotify"]["pairing_supported"] is payload["spotify_auth_configured"]
+    assert payload["direct_spotify"]["paired"] is payload["spotify_configured"]
+    assert payload["direct_spotify"]["token_source"] in {"runtime", "environment", "none"}
+    assert payload["direct_spotify"]["token_secret_exposed"] is False
+    assert payload["direct_spotify"]["credential_owner"] == "local_bridge"
+    assert "refresh_token" not in payload["direct_spotify"]
     polling = payload["polling"]
     assert polling["mode"] in {"active", "idle"}
     assert isinstance(polling["active_consumers_detected"], bool)

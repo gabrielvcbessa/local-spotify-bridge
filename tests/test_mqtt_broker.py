@@ -406,11 +406,20 @@ def test_mqtt_status_payload_exposes_pending_command_runtime_state():
         target=None,
         mqtt_connected=True,
         command_pending=True,
+        direct_spotify={
+            "transport": "spotify_web_api",
+            "paired": True,
+            "token_source": "runtime",
+            "token_secret_exposed": False,
+        },
     )
 
     assert payload["runtime"]["command_pending"] is True
     assert payload["runtime"]["configured"] is True
     assert payload["runtime"]["reachable"] is True
+    assert payload["direct_spotify"]["paired"] is True
+    assert payload["direct_spotify"]["token_secret_exposed"] is False
+    assert "refresh_token" not in payload["direct_spotify"]
 
 
 def test_mqtt_status_payload_exposes_product_setup_states():

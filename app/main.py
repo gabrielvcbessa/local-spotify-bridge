@@ -183,6 +183,23 @@ async def spotify_auth_not_configured_handler(_, exc: SpotifyAuthNotConfigured):
     return JSONResponse(status_code=503, content={"detail": str(exc)})
 
 
+def direct_spotify_status(client: SpotifyClient | None = None) -> dict[str, Any]:
+    client = client or spotify
+    token_source = getattr(client, "refresh_token_source", "none")
+    return {
+        "transport": "spotify_web_api",
+        "pairing_supported": settings.spotify_auth_configured,
+        "paired": bool(getattr(client, "spotify_configured", False)),
+        "token_source": token_source,
+        "token_present": token_source != "none",
+        "credential_owner": "local_bridge",
+        "runtime_token_store": True,
+        "token_secret_exposed": False,
+        "setup_path": "/v1/auth/login",
+        "disconnect_path": "/v1/auth/token",
+    }
+
+
 @app.get("/health")
 async def health() -> dict[str, Any]:
     target = store.get_target_device()
@@ -209,6 +226,7 @@ async def health() -> dict[str, Any]:
         "spotify_configured": spotify.spotify_configured,
         "spotify_auth_configured": settings.spotify_auth_configured,
         "spotify_refresh_token_source": spotify.refresh_token_source,
+        "direct_spotify": direct_spotify_status(spotify),
         "mqtt_protocol": mqtt_protocol_payload(),
         "backend_capabilities": MQTT_KNOB_BACKEND_CAPABILITIES,
         "mqtt_enabled": settings.mqtt_enabled,
@@ -2057,6 +2075,7 @@ def mqtt_status_payload(
         command_pending=bool(broker.pending_mqtt_command) if command_pending is None else command_pending,
         command_pulse=command_pulse,
         target_readiness=cached_target_readiness(store.get_target_device()),
+        direct_spotify=direct_spotify_status(spotify),
     )
 
 

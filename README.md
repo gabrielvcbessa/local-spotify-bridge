@@ -610,6 +610,11 @@ can show the current ownership boundary without guessing. The same architecture 
 `profile_model=single_bridge_profile` and `multi_profile_selection=false`; multi-profile backend
 switching remains blocked until a profile registry exists. Config also includes a `protocol` block:
 
+The retained `status` message and `/health` also expose a dynamic `direct_spotify` block. It is
+intentionally token-free: clients can read `paired`, `pairing_supported`, `token_source`,
+`credential_owner`, `setup_path`, and `disconnect_path`, while `token_secret_exposed=false` confirms
+that refresh-token material is never published over MQTT or diagnostics.
+
 The `devices.readiness_contract` capability documents the target safety vocabulary clients should
 expect in retained `status.target_readiness`: `safe_for_live_control` means the target resolves and
 is not restricted, while `ready_for_live_control` additionally requires the device to be active,

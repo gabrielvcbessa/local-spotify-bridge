@@ -1338,6 +1338,10 @@ def test_mqtt_status_payload_uses_cached_target_readiness(monkeypatch):
     assert payload["target_readiness"]["last_update_at"] == payload["target_readiness"]["checked_at"]
     assert payload["target_readiness"]["resolved_device_id"] == "speaker-1"
     assert payload["target_readiness"]["risks"] == []
+    assert payload["direct_spotify"]["transport"] == "spotify_web_api"
+    assert payload["direct_spotify"]["credential_owner"] == "local_bridge"
+    assert payload["direct_spotify"]["token_secret_exposed"] is False
+    assert "refresh_token" not in payload["direct_spotify"]
 
 
 def test_target_device_readiness_reports_zero_volume_risk():
