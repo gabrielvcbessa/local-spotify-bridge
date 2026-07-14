@@ -1336,7 +1336,7 @@ async def play(command: PlaybackCommand, client: Annotated[SpotifyClient, Depend
         device_id = await rest_live_control_device_id(client, command.device_id, command_type="play")
         await client.play(body=body, device_id=device_id)
         await publish_mqtt_status(command_type="play", command_ok=True)
-        await refresh_after_successful_command(client, follow_up_delays=settings.command_followup_refresh_delays_for("play"))
+        await publish_rest_command_refresh_status(client, "play", follow_up_delays=settings.command_followup_refresh_delays_for("play"))
     except HTTPException:
         raise
     except Exception as exc:
@@ -1351,7 +1351,7 @@ async def pause(
     try:
         await client.pause(device_id=await rest_live_control_device_id(client, device_id, command_type="pause"))
         await publish_mqtt_status(command_type="pause", command_ok=True)
-        await refresh_after_successful_command(client, follow_up_delays=settings.command_followup_refresh_delays_for("pause"))
+        await publish_rest_command_refresh_status(client, "pause", follow_up_delays=settings.command_followup_refresh_delays_for("pause"))
     except HTTPException:
         raise
     except Exception as exc:
@@ -1367,7 +1367,7 @@ async def next_track(
         await client.next_track(device_id=await rest_live_control_device_id(client, device_id, command_type="next"))
         broker.mark_forward_transition_expected()
         await publish_mqtt_status(command_type="next", command_ok=True)
-        await refresh_after_successful_command(client, follow_up_delays=settings.command_followup_refresh_delays_for("next"))
+        await publish_rest_command_refresh_status(client, "next", follow_up_delays=settings.command_followup_refresh_delays_for("next"))
     except HTTPException:
         raise
     except Exception as exc:
@@ -1382,7 +1382,7 @@ async def previous_track(
     try:
         await client.previous_track(device_id=await rest_live_control_device_id(client, device_id, command_type="previous"))
         await publish_mqtt_status(command_type="previous", command_ok=True)
-        await refresh_after_successful_command(client, follow_up_delays=settings.command_followup_refresh_delays_for("previous"))
+        await publish_rest_command_refresh_status(client, "previous", follow_up_delays=settings.command_followup_refresh_delays_for("previous"))
     except HTTPException:
         raise
     except Exception as exc:
@@ -1429,7 +1429,7 @@ async def seek(command: SeekCommand, client: Annotated[SpotifyClient, Depends(sp
             await rest_live_control_device_id(client, command.device_id, command_type="seek"),
         )
         await publish_mqtt_status(command_type="seek", command_ok=True)
-        await refresh_after_successful_command(client)
+        await publish_rest_command_refresh_status(client, "seek")
     except HTTPException:
         raise
     except Exception as exc:
@@ -1445,7 +1445,7 @@ async def set_volume(
         device_id = await command_device_id(client, command.device_id)
         await client.set_volume(command.volume_percent, device_id)
         await publish_mqtt_status(command_type="volume_set", command_ok=True)
-        await refresh_after_successful_command(client)
+        await publish_rest_command_refresh_status(client, "volume_set")
     except Exception as exc:
         raise translate_spotify_error(exc) from exc
 
@@ -1795,6 +1795,27 @@ async def refresh_after_successful_command(
     except Exception as exc:
         broker.mark_spotify_error(exc)
         return False
+
+
+async def publish_rest_command_refresh_status(
+    client: SpotifyClient,
+    command_type: str,
+    *,
+    follow_up_delays: tuple[float, ...] = (),
+) -> bool:
+    published_state = await refresh_after_successful_command(client, follow_up_delays=follow_up_delays)
+    await publish_mqtt_status(
+        command_type=command_type,
+        command_ok=True,
+        command_metadata={
+            "state_version": broker.version,
+            "published_state": published_state,
+            "state_refresh_ok": published_state,
+            "state_publish_forced": True,
+            "playback_affecting": mqtt_command_policy(command_type).playback_affecting,
+        },
+    )
+    return published_state
 
 
 async def refresh_devices_after_successful_command(client: SpotifyClient) -> bool:

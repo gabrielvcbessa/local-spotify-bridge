@@ -887,16 +887,36 @@ async def test_rest_controls_use_command_specific_follow_up_profiles(monkeypatch
         main.settings.command_followup_refresh_delays_for("next"),
         main.settings.command_followup_refresh_delays_for("previous"),
     ]
-    assert status_pulses == [("play", None, None), ("pause", None, None), ("next", None, None), ("previous", None, None)]
+    expected_metadata = {
+        "state_version": main.broker.version,
+        "published_state": True,
+        "state_refresh_ok": True,
+        "state_publish_forced": True,
+        "playback_affecting": True,
+    }
+    assert status_pulses == [
+        ("play", None, None),
+        ("play", None, expected_metadata),
+        ("pause", None, None),
+        ("pause", None, expected_metadata),
+        ("next", None, None),
+        ("next", None, expected_metadata),
+        ("previous", None, None),
+        ("previous", None, expected_metadata),
+    ]
     assert events == [
         ("status", "play", None, None),
         ("refresh", main.settings.command_followup_refresh_delays_for("play")),
+        ("status", "play", None, expected_metadata),
         ("status", "pause", None, None),
         ("refresh", main.settings.command_followup_refresh_delays_for("pause")),
+        ("status", "pause", None, expected_metadata),
         ("status", "next", None, None),
         ("refresh", main.settings.command_followup_refresh_delays_for("next")),
+        ("status", "next", None, expected_metadata),
         ("status", "previous", None, None),
         ("refresh", main.settings.command_followup_refresh_delays_for("previous")),
+        ("status", "previous", None, expected_metadata),
     ]
 
 
@@ -913,7 +933,7 @@ async def test_rest_seek_and_volume_publish_status_before_refresh(monkeypatch):
 
     async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None, command_metadata=None):
         _ = (command_request_id, command_pending)
-        events.append(("status", command_type, command_ok))
+        events.append(("status", command_type, command_ok, command_metadata))
 
     monkeypatch.setattr(main, "refresh_and_publish", fake_refresh_and_publish)
     monkeypatch.setattr(main, "command_device_id", fake_command_device_id)
@@ -922,12 +942,28 @@ async def test_rest_seek_and_volume_publish_status_before_refresh(monkeypatch):
     await main.seek(SeekCommand(position_ms=42000, device_id="speaker-1"), client=client)
     await main.set_volume(VolumeCommand(volume_percent=42, device_id="speaker-2"), client=client)
 
+    expected_seek_metadata = {
+        "state_version": main.broker.version,
+        "published_state": None,
+        "state_refresh_ok": None,
+        "state_publish_forced": True,
+        "playback_affecting": True,
+    }
+    expected_volume_metadata = {
+        "state_version": main.broker.version,
+        "published_state": None,
+        "state_refresh_ok": None,
+        "state_publish_forced": True,
+        "playback_affecting": False,
+    }
     assert client.calls == [("seek", "speaker-1"), ("volume", "speaker-2")]
     assert events == [
-        ("status", "seek", True),
+        ("status", "seek", True, None),
         ("refresh", ()),
-        ("status", "volume_set", True),
+        ("status", "seek", True, expected_seek_metadata),
+        ("status", "volume_set", True, None),
         ("refresh", ()),
+        ("status", "volume_set", True, expected_volume_metadata),
     ]
 
 
@@ -957,7 +993,10 @@ async def test_rest_control_success_survives_refresh_failure(monkeypatch):
         main.broker.last_spotify_error = previous_error
 
     assert client.calls == [("play", "speaker-1")]
-    assert status_pulses == [("play", None, None, True)]
+    assert status_pulses == [
+        ("play", None, None, True),
+        ("play", None, None, True),
+    ]
 
 
 @pytest.mark.asyncio
