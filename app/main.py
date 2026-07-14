@@ -1388,6 +1388,7 @@ async def set_target(
                     "state_refresh_ok": published_state,
                     "state_publish_forced": True,
                     "playback_affecting": True,
+                    "expected_playing": command.play,
                     "queue_status_published": published_state,
                     "queue_status_source": "retained_state_adjacent_tracks",
                     "device_refresh_ok": device_refresh_ok,
@@ -1439,7 +1440,12 @@ async def play(command: PlaybackCommand, client: Annotated[SpotifyClient, Depend
         device_id = await rest_live_control_device_id(client, command.device_id, command_type="play")
         await client.play(body=body, device_id=device_id)
         await publish_mqtt_status(command_type="play", command_ok=True)
-        await publish_rest_command_refresh_status(client, "play", follow_up_delays=settings.command_followup_refresh_delays_for("play"))
+        await publish_rest_command_refresh_status(
+            client,
+            "play",
+            follow_up_delays=settings.command_followup_refresh_delays_for("play"),
+            expected_playing=True,
+        )
     except HTTPException:
         raise
     except Exception as exc:
@@ -1454,7 +1460,12 @@ async def pause(
     try:
         await client.pause(device_id=await rest_live_control_device_id(client, device_id, command_type="pause"))
         await publish_mqtt_status(command_type="pause", command_ok=True)
-        await publish_rest_command_refresh_status(client, "pause", follow_up_delays=settings.command_followup_refresh_delays_for("pause"))
+        await publish_rest_command_refresh_status(
+            client,
+            "pause",
+            follow_up_delays=settings.command_followup_refresh_delays_for("pause"),
+            expected_playing=False,
+        )
     except HTTPException:
         raise
     except Exception as exc:
@@ -1470,7 +1481,12 @@ async def next_track(
         await client.next_track(device_id=await rest_live_control_device_id(client, device_id, command_type="next"))
         broker.mark_forward_transition_expected()
         await publish_mqtt_status(command_type="next", command_ok=True)
-        await publish_rest_command_refresh_status(client, "next", follow_up_delays=settings.command_followup_refresh_delays_for("next"))
+        await publish_rest_command_refresh_status(
+            client,
+            "next",
+            follow_up_delays=settings.command_followup_refresh_delays_for("next"),
+            expected_playing=True,
+        )
     except HTTPException:
         raise
     except Exception as exc:
@@ -1485,7 +1501,12 @@ async def previous_track(
     try:
         await client.previous_track(device_id=await rest_live_control_device_id(client, device_id, command_type="previous"))
         await publish_mqtt_status(command_type="previous", command_ok=True)
-        await publish_rest_command_refresh_status(client, "previous", follow_up_delays=settings.command_followup_refresh_delays_for("previous"))
+        await publish_rest_command_refresh_status(
+            client,
+            "previous",
+            follow_up_delays=settings.command_followup_refresh_delays_for("previous"),
+            expected_playing=True,
+        )
     except HTTPException:
         raise
     except Exception as exc:
@@ -1515,6 +1536,7 @@ async def transfer_playback(
                 "state_refresh_ok": published_state,
                 "state_publish_forced": True,
                 "playback_affecting": True,
+                "expected_playing": command.play,
                 "queue_status_published": published_state,
                 "queue_status_source": "retained_state_adjacent_tracks",
                 "device_refresh_ok": device_refresh_ok,
@@ -1908,6 +1930,7 @@ async def publish_rest_command_refresh_status(
     command_type: str,
     *,
     follow_up_delays: tuple[float, ...] = (),
+    expected_playing: bool | None = None,
 ) -> bool:
     published_state = await refresh_after_successful_command(client, follow_up_delays=follow_up_delays)
     policy = mqtt_command_policy(command_type)
@@ -1918,6 +1941,8 @@ async def publish_rest_command_refresh_status(
         "state_publish_forced": True,
         "playback_affecting": policy.playback_affecting,
     }
+    if expected_playing is not None:
+        metadata["expected_playing"] = expected_playing
     if policy.playback_affecting:
         metadata["queue_status_published"] = published_state
         metadata["queue_status_source"] = "retained_state_adjacent_tracks"
@@ -1927,6 +1952,19 @@ async def publish_rest_command_refresh_status(
         command_metadata=metadata,
     )
     return published_state
+
+
+def expected_playing_for_command(command_type: str, command: dict[str, Any] | None = None, *, currently_playing: bool | None = None) -> bool | None:
+    if command_type in {"play", "next", "previous", "select_source", "play_library_item"}:
+        return True
+    if command_type == "pause":
+        return False
+    if command_type == "play_pause":
+        return not bool(currently_playing)
+    if command_type == "transfer" and command is not None:
+        play = command.get("play", True)
+        return bool(play) if isinstance(play, bool) else True
+    return None
 
 
 async def refresh_devices_after_successful_command(client: SpotifyClient) -> bool:
@@ -2589,11 +2627,13 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(request_id, str):
         request_id = None
     command_policy = mqtt_command_policy(command_type)
+    currently_playing = broker.current_state.is_playing if broker.current_state is not None else None
+    expected_playing = expected_playing_for_command(command_type, command, currently_playing=currently_playing)
     await publish_mqtt_status(command_type=command_type, command_request_id=request_id, command_pending=True)
     try:
         if command_type == "play_pause":
             device_id = await verified_live_control_device_id(spotify, command.get("device_id"), command_type=command_type)
-            if broker.current_state and broker.current_state.is_playing:
+            if currently_playing:
                 await spotify.pause(device_id=device_id)
             else:
                 await spotify.play(device_id=device_id)
@@ -2685,12 +2725,15 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
         else:
             raise ValueError(f"Unsupported MQTT command type: {command_type}")
 
+        command_metadata: dict[str, Any] = {"playback_affecting": command_policy.playback_affecting}
+        if expected_playing is not None:
+            command_metadata["expected_playing"] = expected_playing
         await publish_mqtt_status(
             command_type=command_type,
             command_request_id=request_id,
             command_pending=False,
             command_ok=True,
-            command_metadata={"playback_affecting": command_policy.playback_affecting},
+            command_metadata=command_metadata,
         )
         device_refresh_ok: bool | None = None
         if command_policy.refresh_devices:
@@ -2706,6 +2749,8 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
             "state_publish_forced": True,
             "playback_affecting": command_policy.playback_affecting,
         }
+        if expected_playing is not None:
+            result["expected_playing"] = expected_playing
         if command_policy.playback_affecting:
             result["queue_status_published"] = published_state
             result["queue_status_source"] = "retained_state_adjacent_tracks"

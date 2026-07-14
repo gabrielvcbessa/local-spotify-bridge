@@ -529,7 +529,7 @@ async def test_mqtt_command_success_status_publishes_before_state_refresh(monkey
 
     assert events == [
         ("status", "next", "knob-next-ack", True, None, None),
-        ("status", "next", "knob-next-ack", False, True, {"playback_affecting": True}),
+        ("status", "next", "knob-next-ack", False, True, {"playback_affecting": True, "expected_playing": True}),
         ("refresh", main.settings.command_followup_refresh_delays_for("next"), True),
         (
             "status",
@@ -543,6 +543,7 @@ async def test_mqtt_command_success_status_publishes_before_state_refresh(monkey
                     "state_refresh_ok": True,
                     "state_publish_forced": True,
                     "playback_affecting": True,
+                    "expected_playing": True,
                     "queue_status_published": True,
                     "queue_status_source": QUEUE_STATUS_SOURCE,
                 },
@@ -815,7 +816,7 @@ async def test_mqtt_play_pause_does_not_use_implicit_target_device(monkeypatch):
     ]
     assert status_pulses == [
         ("play_pause", None, True, None, None),
-        ("play_pause", None, False, True, {"playback_affecting": True}),
+        ("play_pause", None, False, True, {"playback_affecting": True, "expected_playing": False}),
         (
             "play_pause",
             None,
@@ -827,12 +828,13 @@ async def test_mqtt_play_pause_does_not_use_implicit_target_device(monkeypatch):
                 "state_refresh_ok": True,
                 "state_publish_forced": True,
                 "playback_affecting": True,
+                "expected_playing": False,
                 "queue_status_published": True,
                 "queue_status_source": QUEUE_STATUS_SOURCE,
             },
         ),
         ("play_pause", None, True, None, None),
-        ("play_pause", None, False, True, {"playback_affecting": True}),
+        ("play_pause", None, False, True, {"playback_affecting": True, "expected_playing": True}),
         (
             "play_pause",
             None,
@@ -844,12 +846,13 @@ async def test_mqtt_play_pause_does_not_use_implicit_target_device(monkeypatch):
                 "state_refresh_ok": True,
                 "state_publish_forced": True,
                 "playback_affecting": True,
+                "expected_playing": True,
                 "queue_status_published": True,
                 "queue_status_source": QUEUE_STATUS_SOURCE,
             },
         ),
         ("play", "knob-play-1", True, None, None),
-        ("play", "knob-play-1", False, True, {"playback_affecting": True}),
+        ("play", "knob-play-1", False, True, {"playback_affecting": True, "expected_playing": True}),
         (
             "play",
             "knob-play-1",
@@ -861,12 +864,13 @@ async def test_mqtt_play_pause_does_not_use_implicit_target_device(monkeypatch):
                 "state_refresh_ok": True,
                 "state_publish_forced": True,
                 "playback_affecting": True,
+                "expected_playing": True,
                 "queue_status_published": True,
                 "queue_status_source": QUEUE_STATUS_SOURCE,
             },
         ),
         ("pause", None, True, None, None),
-        ("pause", None, False, True, {"playback_affecting": True}),
+        ("pause", None, False, True, {"playback_affecting": True, "expected_playing": False}),
         (
             "pause",
             None,
@@ -878,6 +882,7 @@ async def test_mqtt_play_pause_does_not_use_implicit_target_device(monkeypatch):
                 "state_refresh_ok": True,
                 "state_publish_forced": True,
                 "playback_affecting": True,
+                "expected_playing": False,
                 "queue_status_published": True,
                 "queue_status_source": QUEUE_STATUS_SOURCE,
             },
@@ -935,29 +940,31 @@ async def test_rest_controls_use_command_specific_follow_up_profiles(monkeypatch
         "queue_status_published": True,
         "queue_status_source": QUEUE_STATUS_SOURCE,
     }
+    expected_playing_metadata = {**expected_metadata, "expected_playing": True}
+    expected_paused_metadata = {**expected_metadata, "expected_playing": False}
     assert status_pulses == [
         ("play", None, None),
-        ("play", None, expected_metadata),
+        ("play", None, expected_playing_metadata),
         ("pause", None, None),
-        ("pause", None, expected_metadata),
+        ("pause", None, expected_paused_metadata),
         ("next", None, None),
-        ("next", None, expected_metadata),
+        ("next", None, expected_playing_metadata),
         ("previous", None, None),
-        ("previous", None, expected_metadata),
+        ("previous", None, expected_playing_metadata),
     ]
     assert events == [
         ("status", "play", None, None),
         ("refresh", main.settings.command_followup_refresh_delays_for("play")),
-        ("status", "play", None, expected_metadata),
+        ("status", "play", None, expected_playing_metadata),
         ("status", "pause", None, None),
         ("refresh", main.settings.command_followup_refresh_delays_for("pause")),
-        ("status", "pause", None, expected_metadata),
+        ("status", "pause", None, expected_paused_metadata),
         ("status", "next", None, None),
         ("refresh", main.settings.command_followup_refresh_delays_for("next")),
-        ("status", "next", None, expected_metadata),
+        ("status", "next", None, expected_playing_metadata),
         ("status", "previous", None, None),
         ("refresh", main.settings.command_followup_refresh_delays_for("previous")),
-        ("status", "previous", None, expected_metadata),
+        ("status", "previous", None, expected_playing_metadata),
     ]
 
 
@@ -1103,6 +1110,7 @@ async def test_rest_transfer_paths_use_transfer_follow_up_profile(monkeypatch):
                 "state_refresh_ok": True,
                 "state_publish_forced": True,
                 "playback_affecting": True,
+                "expected_playing": True,
                 "queue_status_published": True,
                 "queue_status_source": QUEUE_STATUS_SOURCE,
                 "device_refresh_ok": True,
@@ -1119,6 +1127,7 @@ async def test_rest_transfer_paths_use_transfer_follow_up_profile(monkeypatch):
                 "state_refresh_ok": True,
                 "state_publish_forced": True,
                 "playback_affecting": True,
+                "expected_playing": True,
                 "queue_status_published": True,
                 "queue_status_source": QUEUE_STATUS_SOURCE,
                 "device_refresh_ok": True,
@@ -1141,6 +1150,7 @@ async def test_rest_transfer_paths_use_transfer_follow_up_profile(monkeypatch):
                 "state_refresh_ok": True,
                 "state_publish_forced": True,
                 "playback_affecting": True,
+                "expected_playing": True,
                 "queue_status_published": True,
                 "queue_status_source": QUEUE_STATUS_SOURCE,
                 "device_refresh_ok": True,
@@ -1161,6 +1171,7 @@ async def test_rest_transfer_paths_use_transfer_follow_up_profile(monkeypatch):
                 "state_refresh_ok": True,
                 "state_publish_forced": True,
                 "playback_affecting": True,
+                "expected_playing": True,
                 "queue_status_published": True,
                 "queue_status_source": QUEUE_STATUS_SOURCE,
                 "device_refresh_ok": True,
@@ -1212,6 +1223,7 @@ async def test_rest_transfer_success_survives_device_refresh_failure(monkeypatch
                 "state_refresh_ok": True,
                 "state_publish_forced": True,
                 "playback_affecting": True,
+                "expected_playing": True,
                 "queue_status_published": True,
                 "queue_status_source": QUEUE_STATUS_SOURCE,
                 "device_refresh_ok": False,
