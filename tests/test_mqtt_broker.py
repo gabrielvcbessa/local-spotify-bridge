@@ -298,11 +298,38 @@ def test_mqtt_status_payload_exposes_m5_status_fields_and_command_pulses():
     assert ready["runtime"]["command_pending"] is False
     assert ready["last_command"]["type"] == "play"
     assert ready["last_command"]["request_id"] == "knob-play-1"
+    assert "ok" not in ready["last_command"]
     assert degraded["status"] == "backend_unreachable"
     assert degraded["message"] == "Spotify offline"
     assert degraded["runtime"]["degraded"] is True
     assert degraded["runtime"]["state"] == "backend_unreachable"
     assert mqtt_payload_fingerprint(ready) != mqtt_payload_fingerprint(next_pulse)
+
+
+def test_mqtt_status_payload_preserves_command_outcome():
+    success = status_payload(
+        version=1,
+        spotify_configured=True,
+        last_poll_at="2026-07-06T10:00:00+00:00",
+        last_error=None,
+        current_state=PlaybackSnapshot(device_id="speaker-1"),
+        target=None,
+        mqtt_connected=True,
+        command_pulse={"type": "play", "request_id": "knob-play-1", "ok": True},
+    )
+    failure = status_payload(
+        version=1,
+        spotify_configured=True,
+        last_poll_at="2026-07-06T10:00:00+00:00",
+        last_error=None,
+        current_state=PlaybackSnapshot(device_id="speaker-1"),
+        target=None,
+        mqtt_connected=True,
+        command_pulse={"type": "transfer", "request_id": "knob-transfer-1", "ok": False},
+    )
+
+    assert success["last_command"]["ok"] is True
+    assert failure["last_command"]["ok"] is False
 
 
 def test_mqtt_status_payload_exposes_pending_command_runtime_state():
