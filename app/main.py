@@ -1060,10 +1060,13 @@ async def set_target(
                 client,
                 follow_up_delays=settings.command_followup_refresh_delays_for("transfer"),
             )
+            await refresh_devices_and_publish(client)
     except Exception as exc:
         raise translate_spotify_error(exc) from exc
 
     state_store.set_target_device(target)
+    if client.spotify_configured and not command.transfer_playback:
+        await refresh_devices_and_publish(client)
     await publish_mqtt_status(command_type="transfer" if command.transfer_playback else "set_target")
     return {
         "target": target.model_dump(mode="json"),
@@ -1146,6 +1149,7 @@ async def transfer_playback(
         await client.transfer_playback(command.device_id, command.play)
         store.set_target_device(TargetDevice(device_id=command.device_id))
         await refresh_and_publish(client, follow_up_delays=settings.command_followup_refresh_delays_for("transfer"))
+        await refresh_devices_and_publish(client)
         await publish_mqtt_status(command_type="transfer")
     except HTTPException:
         raise
