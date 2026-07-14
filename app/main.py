@@ -491,6 +491,12 @@ def debug_dashboard_html() -> str:
         <div class="muted" id="spotifyActionStatus"></div>
       </div>
       <div class="panel">
+        <h2>Target Readiness</h2>
+        <div class="metric" id="targetReadiness">-</div>
+        <div class="muted" id="targetReadinessDetail"></div>
+        <div class="muted" id="targetReadinessMeta"></div>
+      </div>
+      <div class="panel">
         <h2>Stored Events</h2>
         <div class="metric" id="storedEvents">-</div>
         <div class="muted" id="retention"></div>
@@ -638,6 +644,12 @@ def debug_dashboard_html() -> str:
       return td;
     }
 
+    function yesNo(value) {
+      if (value === true) return "yes";
+      if (value === false) return "no";
+      return "-";
+    }
+
     function renderRows(target, data, kind) {
       target.replaceChildren();
       const entries = Object.entries(data.by_type || {});
@@ -687,6 +699,19 @@ def debug_dashboard_html() -> str:
       document.getElementById("spotifyConnectionDetail").textContent =
         "token source " + tokenSource + ", auth app " + (health.spotify_auth_configured ? "configured" : "missing");
       document.getElementById("spotifyDisconnect").disabled = tokenSource === "none";
+      const readiness = health.target_readiness || {};
+      const risks = Array.isArray(readiness.risks) ? readiness.risks : [];
+      const readinessReady = readiness.ready_for_live_control === true;
+      const readinessSafe = readiness.safe_for_live_control === true;
+      const readinessLabel = readinessReady ? "ready" : (readinessSafe ? "attention" : "blocked");
+      document.getElementById("targetReadiness").textContent = readinessLabel;
+      document.getElementById("targetReadiness").className =
+        "metric " + (readinessReady ? "ok" : (readinessSafe ? "warn" : "error"));
+      document.getElementById("targetReadinessDetail").textContent =
+        (readiness.resolved_device_id || "no target") + ", risks " + (risks.length ? risks.join(", ") : "none");
+      document.getElementById("targetReadinessMeta").textContent =
+        "active " + yesNo(readiness.active) + ", volume " + yesNo(readiness.volume_control_supported) +
+        ", checked " + (readiness.checked_at || "-");
       const idle = health.consumer_idle_explanation || {};
       const idleAge = idle.mqtt_last_activity_age_seconds == null ? "no MQTT activity" : Math.round(idle.mqtt_last_activity_age_seconds) + "s ago";
       document.getElementById("consumerReason").textContent = idle.reason || "-";

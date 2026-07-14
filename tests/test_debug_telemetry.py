@@ -242,11 +242,14 @@ def test_debug_dashboard_serves_html():
     assert "/v1/debug/events" in response.text
     assert "Last MQTT Command" in response.text
     assert "Spotify Connection" in response.text
+    assert "Target Readiness" in response.text
     assert "Consumer Decision" in response.text
     assert "MQTT Command / Request History" in response.text
     assert "Retained MQTT Payloads" in response.text
     assert "spotifyConnectionDetail" in response.text
     assert "spotifyDisconnect" in response.text
+    assert "targetReadinessDetail" in response.text
+    assert "targetReadinessMeta" in response.text
     assert "/v1/auth/token" in response.text
     assert "mqttRetainedRows" in response.text
     assert "consumerReasonDetail" in response.text
