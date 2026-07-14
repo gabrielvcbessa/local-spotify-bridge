@@ -661,8 +661,11 @@ an `error` string when the bridge has a concrete failure reason. MQTT commands i
 acknowledgement if they miss the non-retained `command_result` and `runtime.command_pending` is
 false. When the bridge advertises `status_command_metadata`, retained `last_command` pulses can also
 include the same stable `ignored`, `reason`, `playback_affecting`, `state_version`,
-`published_state`, `state_refresh_ok`, `state_publish_forced`, `device_refresh_ok`, and
-`published_devices` fields as `command_result`. Bridges that include `device_refresh_ok` and
+`published_state`, `state_refresh_ok`, `state_publish_forced`, `queue_status_published`,
+`queue_status_source`, `device_refresh_ok`, and `published_devices` fields as `command_result`.
+`queue_status_published` refers to the retained state snapshot that carries the current
+`next_track` and derived `previous_track` advisory queue/art preload fields. Bridges that include
+`device_refresh_ok` and
 `published_devices` also advertise `command_device_refresh_result`, giving low-power clients enough
 fallback context to avoid showing a misleading success toast or stale target-device readiness.
 
@@ -689,8 +692,8 @@ snapshot. `volume_set` is ignored with a successful command result when the curr
 Commands should include a stable `request_id`. If the same `request_id` is received again, the bridge
 replays the cached `command_result` instead of sending the command to Spotify twice. Command results
 include `received_at`, `completed_at`, `latency_ms`, and `idempotent_replay` when a cached result was
-replayed. Bridges advertising `command_result_metadata` also include stable `ignored`, `reason`, and
-`playback_affecting` fields when they apply.
+replayed. Bridges advertising `command_result_metadata` also include stable `ignored`, `reason`,
+`playback_affecting`, `queue_status_published`, and `queue_status_source` fields when they apply.
 
 MQTT request examples for non-playback data:
 

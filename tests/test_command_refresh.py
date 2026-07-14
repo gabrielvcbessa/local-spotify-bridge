@@ -4,6 +4,9 @@ import app.main as main
 from app.models import PlaybackCommand, PlaybackSnapshot, SeekCommand, TargetDeviceCommand, TransferPlaybackCommand, VolumeCommand
 
 
+QUEUE_STATUS_SOURCE = "retained_state_adjacent_tracks"
+
+
 class FakeSpotifyClient:
     def __init__(self) -> None:
         self.calls = 0
@@ -534,15 +537,17 @@ async def test_mqtt_command_success_status_publishes_before_state_refresh(monkey
             "knob-next-ack",
             False,
             True,
-            {
-                "state_version": main.broker.version,
-                "published_state": True,
-                "state_refresh_ok": True,
-                "state_publish_forced": True,
-                "playback_affecting": True,
-            },
-        ),
-    ]
+                {
+                    "state_version": main.broker.version,
+                    "published_state": True,
+                    "state_refresh_ok": True,
+                    "state_publish_forced": True,
+                    "playback_affecting": True,
+                    "queue_status_published": True,
+                    "queue_status_source": QUEUE_STATUS_SOURCE,
+                },
+            ),
+        ]
 
 
 @pytest.mark.asyncio
@@ -822,6 +827,8 @@ async def test_mqtt_play_pause_does_not_use_implicit_target_device(monkeypatch):
                 "state_refresh_ok": True,
                 "state_publish_forced": True,
                 "playback_affecting": True,
+                "queue_status_published": True,
+                "queue_status_source": QUEUE_STATUS_SOURCE,
             },
         ),
         ("play_pause", None, True, None, None),
@@ -837,6 +844,8 @@ async def test_mqtt_play_pause_does_not_use_implicit_target_device(monkeypatch):
                 "state_refresh_ok": True,
                 "state_publish_forced": True,
                 "playback_affecting": True,
+                "queue_status_published": True,
+                "queue_status_source": QUEUE_STATUS_SOURCE,
             },
         ),
         ("play", "knob-play-1", True, None, None),
@@ -852,6 +861,8 @@ async def test_mqtt_play_pause_does_not_use_implicit_target_device(monkeypatch):
                 "state_refresh_ok": True,
                 "state_publish_forced": True,
                 "playback_affecting": True,
+                "queue_status_published": True,
+                "queue_status_source": QUEUE_STATUS_SOURCE,
             },
         ),
         ("pause", None, True, None, None),
@@ -867,6 +878,8 @@ async def test_mqtt_play_pause_does_not_use_implicit_target_device(monkeypatch):
                 "state_refresh_ok": True,
                 "state_publish_forced": True,
                 "playback_affecting": True,
+                "queue_status_published": True,
+                "queue_status_source": QUEUE_STATUS_SOURCE,
             },
         ),
     ]
@@ -919,6 +932,8 @@ async def test_rest_controls_use_command_specific_follow_up_profiles(monkeypatch
         "state_refresh_ok": True,
         "state_publish_forced": True,
         "playback_affecting": True,
+        "queue_status_published": True,
+        "queue_status_source": QUEUE_STATUS_SOURCE,
     }
     assert status_pulses == [
         ("play", None, None),
@@ -974,6 +989,8 @@ async def test_rest_seek_and_volume_publish_status_before_refresh(monkeypatch):
         "state_refresh_ok": None,
         "state_publish_forced": True,
         "playback_affecting": True,
+        "queue_status_published": None,
+        "queue_status_source": QUEUE_STATUS_SOURCE,
     }
     expected_volume_metadata = {
         "state_version": main.broker.version,
@@ -1086,6 +1103,8 @@ async def test_rest_transfer_paths_use_transfer_follow_up_profile(monkeypatch):
                 "state_refresh_ok": True,
                 "state_publish_forced": True,
                 "playback_affecting": True,
+                "queue_status_published": True,
+                "queue_status_source": QUEUE_STATUS_SOURCE,
                 "device_refresh_ok": True,
                 "published_devices": True,
             },
@@ -1100,6 +1119,8 @@ async def test_rest_transfer_paths_use_transfer_follow_up_profile(monkeypatch):
                 "state_refresh_ok": True,
                 "state_publish_forced": True,
                 "playback_affecting": True,
+                "queue_status_published": True,
+                "queue_status_source": QUEUE_STATUS_SOURCE,
                 "device_refresh_ok": True,
                 "published_devices": True,
             },
@@ -1120,6 +1141,8 @@ async def test_rest_transfer_paths_use_transfer_follow_up_profile(monkeypatch):
                 "state_refresh_ok": True,
                 "state_publish_forced": True,
                 "playback_affecting": True,
+                "queue_status_published": True,
+                "queue_status_source": QUEUE_STATUS_SOURCE,
                 "device_refresh_ok": True,
                 "published_devices": True,
             },
@@ -1138,6 +1161,8 @@ async def test_rest_transfer_paths_use_transfer_follow_up_profile(monkeypatch):
                 "state_refresh_ok": True,
                 "state_publish_forced": True,
                 "playback_affecting": True,
+                "queue_status_published": True,
+                "queue_status_source": QUEUE_STATUS_SOURCE,
                 "device_refresh_ok": True,
                 "published_devices": True,
             },
@@ -1187,6 +1212,8 @@ async def test_rest_transfer_success_survives_device_refresh_failure(monkeypatch
                 "state_refresh_ok": True,
                 "state_publish_forced": True,
                 "playback_affecting": True,
+                "queue_status_published": True,
+                "queue_status_source": QUEUE_STATUS_SOURCE,
                 "device_refresh_ok": False,
                 "published_devices": False,
             },

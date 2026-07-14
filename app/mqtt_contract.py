@@ -22,6 +22,7 @@ MQTT_KNOB_FEATURES = [
     "command_state_refresh_result",
     "command_device_refresh_result",
     "command_result_metadata",
+    "queue_status_metadata",
     "status_command_metadata",
     "status_command_ok",
     "status_command_error",

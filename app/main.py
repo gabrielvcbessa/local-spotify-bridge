@@ -725,6 +725,7 @@ def debug_dashboard_html() -> str:
       if (result.playback_affecting != null) bits.push("playback " + yesNo(result.playback_affecting));
       if (result.state_refresh_ok != null) bits.push("state refresh " + yesNo(result.state_refresh_ok));
       if (result.state_publish_forced === true) bits.push("state forced");
+      if (result.queue_status_published != null) bits.push("queue status " + yesNo(result.queue_status_published));
       if (result.device_refresh_ok != null) bits.push("device refresh " + yesNo(result.device_refresh_ok));
       if (result.published_devices === true) bits.push("devices published");
       if (result.idempotent_replay) bits.push("replay");
@@ -1364,6 +1365,8 @@ async def set_target(
                     "state_refresh_ok": published_state,
                     "state_publish_forced": True,
                     "playback_affecting": True,
+                    "queue_status_published": published_state,
+                    "queue_status_source": "retained_state_adjacent_tracks",
                     "device_refresh_ok": device_refresh_ok,
                     "published_devices": device_refresh_ok,
                 },
@@ -1489,6 +1492,8 @@ async def transfer_playback(
                 "state_refresh_ok": published_state,
                 "state_publish_forced": True,
                 "playback_affecting": True,
+                "queue_status_published": published_state,
+                "queue_status_source": "retained_state_adjacent_tracks",
                 "device_refresh_ok": device_refresh_ok,
                 "published_devices": device_refresh_ok,
             },
@@ -1882,16 +1887,21 @@ async def publish_rest_command_refresh_status(
     follow_up_delays: tuple[float, ...] = (),
 ) -> bool:
     published_state = await refresh_after_successful_command(client, follow_up_delays=follow_up_delays)
+    policy = mqtt_command_policy(command_type)
+    metadata: dict[str, Any] = {
+        "state_version": broker.version,
+        "published_state": published_state,
+        "state_refresh_ok": published_state,
+        "state_publish_forced": True,
+        "playback_affecting": policy.playback_affecting,
+    }
+    if policy.playback_affecting:
+        metadata["queue_status_published"] = published_state
+        metadata["queue_status_source"] = "retained_state_adjacent_tracks"
     await publish_mqtt_status(
         command_type=command_type,
         command_ok=True,
-        command_metadata={
-            "state_version": broker.version,
-            "published_state": published_state,
-            "state_refresh_ok": published_state,
-            "state_publish_forced": True,
-            "playback_affecting": mqtt_command_policy(command_type).playback_affecting,
-        },
+        command_metadata=metadata,
     )
     return published_state
 
@@ -2027,6 +2037,8 @@ def mqtt_status_payload(
                 "published_state",
                 "state_refresh_ok",
                 "state_publish_forced",
+                "queue_status_published",
+                "queue_status_source",
                 "device_refresh_ok",
                 "published_devices",
                 "track_saved",
@@ -2670,6 +2682,9 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
             "state_publish_forced": True,
             "playback_affecting": command_policy.playback_affecting,
         }
+        if command_policy.playback_affecting:
+            result["queue_status_published"] = published_state
+            result["queue_status_source"] = "retained_state_adjacent_tracks"
         if command_type == "save_current_track":
             result["track_saved"] = True
         elif command_type == "unsave_current_track":
