@@ -600,7 +600,9 @@ contract that tells constrained clients which backend owns playback, devices, li
 target readiness, and RGB565 art. It also includes an `architecture` block that makes the boundary
 explicit: the bridge is the LAN Spotify Web API proxy and OAuth/token owner, MQTT is the recommended
 client transport, and direct Spotify on-device is advertised as blocked until browser pairing and
-token-storage hardening are solved. Config also includes a `protocol` block:
+token-storage hardening are solved. The same architecture block advertises
+`profile_model=single_bridge_profile` and `multi_profile_selection=false`; multi-profile backend
+switching remains blocked until a profile registry exists. Config also includes a `protocol` block:
 
 ```json
 {

@@ -52,6 +52,9 @@ MQTT_KNOB_BACKEND_CAPABILITIES: dict[str, Any] = {
         "direct_spotify_on_device_blocker": "requires_browser_pairing_and_token_storage_hardening",
         "oauth_owner": "local_bridge",
         "token_storage": "bridge_runtime_or_environment",
+        "profile_model": "single_bridge_profile",
+        "multi_profile_selection": False,
+        "multi_profile_selection_blocker": "profile_registry_not_implemented",
     },
     "runtime_states": [
         "configured",

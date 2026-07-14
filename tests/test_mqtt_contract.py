@@ -49,6 +49,12 @@ def test_mqtt_knob_config_payload_advertises_protocol_and_topics():
     assert payload["capabilities"]["architecture"]["role"] == "lan_spotify_web_api_proxy"
     assert payload["capabilities"]["architecture"]["direct_spotify_bridge_proxy"] is True
     assert payload["capabilities"]["architecture"]["direct_spotify_on_device"] is False
+    assert payload["capabilities"]["architecture"]["profile_model"] == "single_bridge_profile"
+    assert payload["capabilities"]["architecture"]["multi_profile_selection"] is False
+    assert (
+        payload["capabilities"]["architecture"]["multi_profile_selection_blocker"]
+        == "profile_registry_not_implemented"
+    )
     assert (
         payload["capabilities"]["architecture"]["direct_spotify_on_device_blocker"]
         == "requires_browser_pairing_and_token_storage_hardening"
