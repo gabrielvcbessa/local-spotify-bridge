@@ -87,6 +87,9 @@ This clears the persisted refresh token and cached access token immediately. If
 `env_refresh_token_configured: true` because that token will continue to configure the bridge until
 the environment is changed. `/health.spotify_refresh_token_source` reports `runtime`,
 `environment`, or `none` so you can tell which token source is currently configuring Spotify.
+The debug dashboard uses the token-free `/health.direct_spotify` block for the same pairing view:
+it shows pairing availability, token source, credential owner, and confirms whether any token secret
+was exposed without rendering the refresh token itself.
 
 If port `8090` is busy, run with another host port and update the Spotify redirect URI to match:
 

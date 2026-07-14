@@ -797,12 +797,17 @@ def debug_dashboard_html() -> str:
       document.getElementById("consumersActive").textContent = health.polling.active_consumers_detected ? "active" : "idle";
       document.getElementById("consumersDetail").textContent =
         "WS " + health.consumers.websocket_count + ", MQTT " + (health.consumers.mqtt_active ? "active" : "inactive");
-      const tokenSource = health.spotify_refresh_token_source || "none";
-      document.getElementById("spotifyConnection").textContent = health.spotify_configured ? "connected" : "not paired";
-      document.getElementById("spotifyConnection").className = "metric " + (health.spotify_configured ? "ok" : "warn");
+      const directSpotify = health.direct_spotify || {};
+      const tokenSource = directSpotify.token_source || health.spotify_refresh_token_source || "none";
+      const spotifyPaired = directSpotify.paired === true || health.spotify_configured === true;
+      document.getElementById("spotifyConnection").textContent = spotifyPaired ? "paired" : "not paired";
+      document.getElementById("spotifyConnection").className = "metric " + (spotifyPaired ? "ok" : "warn");
       document.getElementById("spotifyConnectionDetail").textContent =
-        "token source " + tokenSource + ", auth app " + (health.spotify_auth_configured ? "configured" : "missing");
-      document.getElementById("spotifyDisconnect").disabled = tokenSource === "none";
+        "pairing " + (directSpotify.pairing_supported ? "available" : "missing") +
+        ", token source " + tokenSource +
+        ", credential owner " + (directSpotify.credential_owner || "local_bridge") +
+        ", token secret exposed " + yesNo(directSpotify.token_secret_exposed);
+      document.getElementById("spotifyDisconnect").disabled = directSpotify.token_present === false || tokenSource === "none";
       const readiness = health.target_readiness || {};
       const risks = Array.isArray(readiness.risks) ? readiness.risks : [];
       const readinessReady = readiness.ready_for_live_control === true;

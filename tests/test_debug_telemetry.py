@@ -340,6 +340,9 @@ def test_debug_dashboard_serves_html():
     assert "MQTT Command / Request History" in response.text
     assert "Retained MQTT Payloads" in response.text
     assert "spotifyConnectionDetail" in response.text
+    assert "credential owner " in response.text
+    assert "token secret exposed " in response.text
+    assert "direct_spotify" in response.text
     assert "spotifyDisconnect" in response.text
     assert "targetReadinessDetail" in response.text
     assert "targetReadinessMeta" in response.text
