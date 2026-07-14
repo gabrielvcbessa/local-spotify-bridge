@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.broker import ConnectionBroker, mqtt_payload_fingerprint
+from app.broker import ConnectionBroker, mqtt_activity_payload_summary, mqtt_payload_fingerprint
 from app.config import Settings
 from app.knob_mqtt import status_payload
 from app.models import PlaybackSnapshot
@@ -806,13 +806,61 @@ async def test_mqtt_command_and_request_refresh_consumer_activity():
 
     await broker._handle_mqtt_message("rotary/kitchen/command", "{\"type\":\"next\"}")
 
-    assert broker.last_mqtt_activity == {"source": "command"}
+    assert broker.last_mqtt_activity is not None
+    assert broker.last_mqtt_activity["source"] == "command"
+    assert broker.last_mqtt_activity["json_valid"] is True
+    assert broker.last_mqtt_activity["json_object"] is True
+    assert broker.last_mqtt_activity["type"] == "next"
+    assert broker.last_mqtt_activity["payload_bytes"] == len("{\"type\":\"next\"}".encode())
+    assert "payload_sha256_12" in broker.last_mqtt_activity
     assert broker.has_active_consumers(ttl_seconds=120)
 
     await broker._handle_mqtt_message("rotary/kitchen/request", "{\"type\":\"refresh\"}")
 
-    assert broker.last_mqtt_activity == {"source": "request"}
+    assert broker.last_mqtt_activity is not None
+    assert broker.last_mqtt_activity["source"] == "request"
+    assert broker.last_mqtt_activity["json_valid"] is True
+    assert broker.last_mqtt_activity["json_object"] is True
+    assert broker.last_mqtt_activity["type"] == "refresh"
     assert broker.has_active_consumers(ttl_seconds=120)
+
+
+@pytest.mark.asyncio
+async def test_malformed_mqtt_command_payload_still_refreshes_consumer_activity():
+    broker = ConnectionBroker(Settings(MQTT_ENABLED=True, MQTT_KNOB_TOPIC_PREFIX="rotary", MQTT_KNOB_DEVICE_ID="kitchen"))
+    broker._mqtt_client = FakeMqttClient()
+    broker.set_mqtt_command_handler(lambda command: None)
+
+    await broker._handle_mqtt_message("rotary/kitchen/command", "{bad json")
+
+    assert broker.last_mqtt_activity is not None
+    assert broker.last_mqtt_activity["source"] == "command"
+    assert broker.last_mqtt_activity["json_valid"] is False
+    assert broker.last_mqtt_activity["json_object"] is False
+    assert broker.has_active_consumers(ttl_seconds=120)
+
+    assert broker._mqtt_client.published
+    topic, payload, _, retain = broker._mqtt_client.published[-1]
+    assert topic == "rotary/kitchen/command_result"
+    assert retain is False
+    response = json.loads(payload)
+    assert response["ok"] is False
+    assert response["error_envelope"]["code"] == "invalid_payload"
+    assert response["error_envelope"]["source"] == "mqtt_command"
+
+
+def test_mqtt_activity_payload_summary_is_token_safe():
+    summary = mqtt_activity_payload_summary('{"type":"play","request_id":"abc","password":"secret"}')
+
+    assert summary == {
+        "payload_bytes": 54,
+        "payload_sha256_12": summary["payload_sha256_12"],
+        "json_valid": True,
+        "json_object": True,
+        "type": "play",
+        "request_id": "abc",
+    }
+    assert "secret" not in json.dumps(summary)
 
 
 def test_broker_active_consumers_uses_recent_mqtt_activity():

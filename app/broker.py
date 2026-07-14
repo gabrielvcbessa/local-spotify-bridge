@@ -52,6 +52,32 @@ def states_are_meaningfully_different(
     return abs(previous.progress_ms - current.progress_ms) > progress_drift_ms
 
 
+def mqtt_activity_payload_summary(payload: str) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "payload_bytes": len(payload.encode()),
+        "payload_sha256_12": hashlib.sha256(payload.encode()).hexdigest()[:12],
+        "json_valid": False,
+        "json_object": False,
+    }
+    try:
+        message = json.loads(payload)
+    except json.JSONDecodeError:
+        return summary
+
+    summary["json_valid"] = True
+    if not isinstance(message, dict):
+        return summary
+
+    summary["json_object"] = True
+    message_type = message.get("type")
+    request_id = message.get("request_id")
+    if isinstance(message_type, str):
+        summary["type"] = message_type
+    if isinstance(request_id, str):
+        summary["request_id"] = request_id
+    return summary
+
+
 class ConnectionBroker:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
@@ -437,13 +463,13 @@ class ConnectionBroker:
             self.mark_mqtt_activity(source="availability", payload=self.last_mqtt_availability)
             return
         if topic == self.mqtt_topic("request"):
-            self.mark_mqtt_activity(source="request")
+            self.mark_mqtt_activity(source="request", payload=mqtt_activity_payload_summary(payload))
             await self._handle_mqtt_rpc(payload, self._mqtt_request_handler, self.mqtt_topic("request_result"), "request")
             return
         if topic != self.mqtt_topic("command"):
             return
 
-        self.mark_mqtt_activity(source="command")
+        self.mark_mqtt_activity(source="command", payload=mqtt_activity_payload_summary(payload))
         await self._handle_mqtt_rpc(payload, self._mqtt_command_handler, self.mqtt_topic("command_result"), "command")
 
     async def _handle_mqtt_rpc(
