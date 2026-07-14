@@ -33,9 +33,10 @@ async def test_mqtt_publish_includes_legacy_and_retained_knob_snapshot():
     mqtt = FakeMqttClient()
     broker._mqtt_client = mqtt
 
-    async def snapshot_factory(version, state):
+    async def snapshot_factory(version, state, force):
         return {
             "version": version,
+            "force": force,
             "payload_hash": "payload",
             "playback_hash": "playback",
             "art_hash": "art",
@@ -51,6 +52,7 @@ async def test_mqtt_publish_includes_legacy_and_retained_knob_snapshot():
     assert mqtt.published[1][0] == "rotary/kitchen/state"
     assert mqtt.published[1][2:] == (1, True)
     assert json.loads(mqtt.published[1][1])["state_title"] == "Song"
+    assert json.loads(mqtt.published[1][1])["force"] is False
 
 
 @pytest.mark.anyio
@@ -68,9 +70,10 @@ async def test_forced_publish_republishes_unchanged_mqtt_snapshot():
     state = PlaybackSnapshot(title="Song")
     broker.current_state = state
 
-    async def snapshot_factory(version, snapshot_state):
+    async def snapshot_factory(version, snapshot_state, force):
         return {
             "version": version,
+            "force": force,
             "state_title": snapshot_state.title if snapshot_state else None,
         }
 
@@ -87,11 +90,11 @@ async def test_forced_publish_republishes_unchanged_mqtt_snapshot():
     assert mqtt.published[0][0] == "local-spotify-bridge/playback"
     assert json.loads(mqtt.published[0][1])["event"] == "playback.refreshed"
     assert mqtt.published[1][0] == "rotary/kitchen/state"
-    assert json.loads(mqtt.published[1][1]) == {"version": 1, "state_title": "Song"}
+    assert json.loads(mqtt.published[1][1]) == {"version": 1, "force": True, "state_title": "Song"}
     assert mqtt.published[2][0] == "local-spotify-bridge/playback"
     assert json.loads(mqtt.published[2][1])["event"] == "playback.refreshed"
     assert mqtt.published[3][0] == "rotary/kitchen/state"
-    assert json.loads(mqtt.published[3][1]) == {"version": 2, "state_title": "Song"}
+    assert json.loads(mqtt.published[3][1]) == {"version": 2, "force": True, "state_title": "Song"}
 
 
 @pytest.mark.anyio

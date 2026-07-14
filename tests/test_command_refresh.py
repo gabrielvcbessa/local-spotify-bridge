@@ -170,15 +170,24 @@ async def test_refresh_after_successful_command_forces_state_publish(monkeypatch
 @pytest.mark.asyncio
 async def test_mqtt_knob_snapshot_publishes_control_state(monkeypatch):
     published = []
+    status_forces = []
 
-    async def fake_publish_mqtt_retained(topic, payload):
-        published.append((topic, payload))
+    async def fake_publish_mqtt_retained(topic, payload, *, force=False):
+        published.append((topic, payload, force))
 
     async def fake_publish_mqtt_art_payloads(_client, _state, _options):
         return None
 
-    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None):
+    async def fake_publish_mqtt_status(
+        command_type=None,
+        command_request_id=None,
+        command_pending=None,
+        command_ok=None,
+        command_error=None,
+        force_publish=False,
+    ):
         _ = (command_type, command_request_id, command_pending, command_ok)
+        status_forces.append(force_publish)
         return None
 
     async def fake_prewarm_cached_track_art(*_args):
@@ -205,15 +214,18 @@ async def test_mqtt_knob_snapshot_publishes_control_state(monkeypatch):
         volume_control_supported=True,
     )
 
-    await main.mqtt_knob_snapshot(7, state)
+    await main.mqtt_knob_snapshot(7, state, force_publish=True)
 
-    control = [payload for topic, payload in published if topic == "control_state"]
+    control = [(payload, force) for topic, payload, force in published if topic == "control_state"]
     assert len(control) == 1
-    assert control[0]["version"] == 7
-    assert control[0]["playing"] is True
-    assert control[0]["track_id"] == "track-1"
-    assert control[0]["device"]["id"] == "device-1"
-    assert control[0]["device"]["volume_percent"] == 42
+    payload, force = control[0]
+    assert force is True
+    assert status_forces == [True]
+    assert payload["version"] == 7
+    assert payload["playing"] is True
+    assert payload["track_id"] == "track-1"
+    assert payload["device"]["id"] == "device-1"
+    assert payload["device"]["volume_percent"] == 42
 
 
 @pytest.mark.asyncio

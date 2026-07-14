@@ -84,7 +84,7 @@ class ConnectionBroker:
         self._websockets: set[WebSocket] = set()
         self._mqtt_client = None
         self._mqtt_loop: asyncio.AbstractEventLoop | None = None
-        self._mqtt_snapshot_factory: Callable[[int, PlaybackSnapshot | None], Awaitable[dict[str, Any]]] | None = None
+        self._mqtt_snapshot_factory: Callable[[int, PlaybackSnapshot | None, bool], Awaitable[dict[str, Any]]] | None = None
         self._mqtt_config_factory: Callable[[], dict[str, Any]] | None = None
         self._mqtt_command_handler: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None = None
         self._mqtt_request_handler: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None = None
@@ -113,7 +113,7 @@ class ConnectionBroker:
 
     def set_mqtt_snapshot_factory(
         self,
-        factory: Callable[[int, PlaybackSnapshot | None], Awaitable[dict[str, Any]]],
+        factory: Callable[[int, PlaybackSnapshot | None, bool], Awaitable[dict[str, Any]]],
     ) -> None:
         self._mqtt_snapshot_factory = factory
 
@@ -392,7 +392,7 @@ class ConnectionBroker:
             topic = f"{self._settings.mqtt_topic_prefix}/playback"
             self._publish_mqtt_json(topic, payload, retain=True, force=force_mqtt)
             if self._mqtt_snapshot_factory is not None:
-                snapshot = await self._mqtt_snapshot_factory(self._version, state)
+                snapshot = await self._mqtt_snapshot_factory(self._version, state, force_mqtt)
                 self._publish_mqtt_json(
                     self.mqtt_topic("state"),
                     retain=True,
@@ -549,10 +549,10 @@ class ConnectionBroker:
                 detail=text,
             )
 
-    async def publish_mqtt_retained(self, topic_key: str, payload: dict[str, Any]) -> None:
+    async def publish_mqtt_retained(self, topic_key: str, payload: dict[str, Any], *, force: bool = False) -> None:
         if self._mqtt_client is None:
             return
-        self._publish_mqtt_json(self.mqtt_topic(topic_key), payload, retain=True)
+        self._publish_mqtt_json(self.mqtt_topic(topic_key), payload, retain=True, force=force)
 
     async def publish_mqtt_retained_bytes(self, topic_key: str, payload: bytes) -> None:
         if self._mqtt_client is None:

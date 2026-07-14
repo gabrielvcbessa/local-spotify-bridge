@@ -1702,7 +1702,7 @@ async def delayed_refresh_and_publish(client: SpotifyClient, delay_seconds: floa
         broker.mark_spotify_error(exc)
 
 
-async def mqtt_knob_snapshot(version: int, state) -> dict[str, Any]:
+async def mqtt_knob_snapshot(version: int, state, force_publish: bool = False) -> dict[str, Any]:
     art_options = mqtt_art_options()
     context_name = await resolved_context_name(spotify, state, resolve_inline=False)
     art_hash = None
@@ -1717,8 +1717,8 @@ async def mqtt_knob_snapshot(version: int, state) -> dict[str, Any]:
 
     await prewarm_cached_track_art(spotify, state, art_options)
     await publish_mqtt_art_payloads(spotify, state, art_options)
-    await publish_mqtt_status()
-    await broker.publish_mqtt_retained("control_state", mqtt_control_state(version, state))
+    await publish_mqtt_status(force_publish=force_publish)
+    await broker.publish_mqtt_retained("control_state", mqtt_control_state(version, state), force=force_publish)
     snapshot = knob_snapshot(
         version=version,
         state=state,
@@ -1823,6 +1823,7 @@ async def publish_mqtt_status(
     command_pending: bool | None = None,
     command_ok: bool | None = None,
     command_error: str | None = None,
+    force_publish: bool = False,
 ) -> None:
     await broker.publish_mqtt_retained(
         "status",
@@ -1833,6 +1834,7 @@ async def publish_mqtt_status(
             command_ok=command_ok,
             command_error=command_error,
         ),
+        force=force_publish,
     )
 
 
