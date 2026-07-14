@@ -1,7 +1,9 @@
 import asyncio
+import subprocess
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from io import BytesIO
+from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
@@ -200,6 +202,40 @@ def direct_spotify_status(client: SpotifyClient | None = None) -> dict[str, Any]
     }
 
 
+def bridge_build_info() -> dict[str, Any]:
+    commit = settings.bridge_build_commit.strip()
+    ref = settings.bridge_build_ref.strip()
+    source = settings.bridge_build_source.strip()
+    if not commit:
+        try:
+            commit = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"],
+                cwd=Path(__file__).resolve().parents[1],
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=0.5,
+            ).strip()
+            source = source or "git"
+        except (OSError, subprocess.SubprocessError):
+            source = source or "unknown"
+    if not ref and source == "git":
+        try:
+            ref = subprocess.check_output(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=Path(__file__).resolve().parents[1],
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=0.5,
+            ).strip()
+        except (OSError, subprocess.SubprocessError):
+            ref = ""
+    return {
+        "commit": commit or "unknown",
+        "ref": ref or "unknown",
+        "source": source or "environment",
+    }
+
+
 @app.get("/health")
 async def health() -> dict[str, Any]:
     target = store.get_target_device()
@@ -226,6 +262,7 @@ async def health() -> dict[str, Any]:
         "spotify_configured": spotify.spotify_configured,
         "spotify_auth_configured": settings.spotify_auth_configured,
         "spotify_refresh_token_source": spotify.refresh_token_source,
+        "build": bridge_build_info(),
         "direct_spotify": direct_spotify_status(spotify),
         "mqtt_protocol": mqtt_protocol_payload(),
         "backend_capabilities": MQTT_KNOB_BACKEND_CAPABILITIES,
@@ -2029,6 +2066,7 @@ def mqtt_knob_config() -> dict[str, Any]:
         topics=broker.mqtt_topics(),
         base_url=mqtt_base_url(),
         art_options=art_options,
+        build=bridge_build_info(),
     )
 
 

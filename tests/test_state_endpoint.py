@@ -58,6 +58,9 @@ def test_mqtt_knob_config_defaults_to_stopwatch_art_size():
     assert main.mqtt_art_options().size == 360
     assert config["schema_version"] == 2
     assert config["protocol"] == mqtt_protocol_payload()
+    assert config["build"]["commit"]
+    assert config["build"]["ref"]
+    assert config["build"]["source"] in {"git", "environment", "unknown"}
     assert config["topics"]["control_state"] == "rotary/knob/control_state"
     assert config["retain"]["control_state"] is True
     assert config["http"]["art_url"] == (
@@ -85,6 +88,7 @@ def test_knob_config_endpoint_mirrors_retained_mqtt_contract():
     assert config["retain"]["config"] is True
     assert config["retain"]["command_result"] is False
     assert config["http"]["snapshot_url"] == "http://localhost:8090/v1/knob/snapshot"
+    assert config["build"]["commit"]
     assert config["capabilities"]["architecture"]["recommended_client_transport"] == "mqtt"
     assert config["capabilities"]["architecture"]["direct_spotify_on_device"] is False
     assert config["capabilities"]["architecture"]["direct_spotify_bridge_proxy"] is True

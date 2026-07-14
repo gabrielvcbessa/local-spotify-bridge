@@ -141,8 +141,9 @@ def mqtt_knob_config_payload(
     topics: dict[str, str],
     base_url: str,
     art_options: ArtOptions,
+    build: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "schema_version": MQTT_KNOB_SCHEMA_VERSION,
         "protocol": mqtt_protocol_payload(),
         "device_id": device_id,
@@ -190,6 +191,9 @@ def mqtt_knob_config_payload(
             "max_subtitle_chars": 64,
         },
     }
+    if build is not None:
+        payload["build"] = build
+    return payload
 
 
 def mqtt_control_state_payload(

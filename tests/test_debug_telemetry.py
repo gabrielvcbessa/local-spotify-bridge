@@ -121,6 +121,9 @@ def test_health_exposes_consumer_detection_and_current_polling_thresholds():
     assert payload["direct_spotify"]["token_secret_exposed"] is False
     assert payload["direct_spotify"]["credential_owner"] == "local_bridge"
     assert "refresh_token" not in payload["direct_spotify"]
+    assert payload["build"]["commit"]
+    assert payload["build"]["ref"]
+    assert payload["build"]["source"] in {"git", "environment", "unknown"}
     polling = payload["polling"]
     assert polling["mode"] in {"active", "idle"}
     assert isinstance(polling["active_consumers_detected"], bool)
