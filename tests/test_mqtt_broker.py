@@ -393,6 +393,34 @@ def test_mqtt_status_payload_exposes_product_setup_states():
         mqtt_connected=True,
         target_readiness={"safe_for_live_control": False, "risks": ["target_not_found"]},
     )
+    target_not_configured = status_payload(
+        version=1,
+        spotify_configured=True,
+        last_poll_at="2026-07-06T10:00:00+00:00",
+        last_error=None,
+        current_state=PlaybackSnapshot(device_id="speaker-1"),
+        target=None,
+        mqtt_connected=True,
+        target_readiness={
+            "safe_for_live_control": False,
+            "ready_for_live_control": False,
+            "risks": ["target_not_configured"],
+        },
+    )
+    inactive_target = status_payload(
+        version=1,
+        spotify_configured=True,
+        last_poll_at="2026-07-06T10:00:00+00:00",
+        last_error=None,
+        current_state=PlaybackSnapshot(device_id="speaker-1"),
+        target=TargetDevice(device_id="speaker-2"),
+        mqtt_connected=True,
+        target_readiness={
+            "safe_for_live_control": True,
+            "ready_for_live_control": False,
+            "risks": ["inactive_device"],
+        },
+    )
 
     assert unconfigured["status"] == "spotify_not_configured"
     assert unconfigured["ok"] is False
@@ -403,6 +431,10 @@ def test_mqtt_status_payload_exposes_product_setup_states():
     assert auth_expired["status"] == "auth_expired"
     assert auth_expired["runtime"]["authenticated"] is False
     assert target_not_ready["status"] == "target_not_ready"
+    assert target_not_configured["status"] == "target_not_ready"
+    assert target_not_configured["runtime"]["target_ready"] is False
+    assert inactive_target["status"] == "target_not_ready"
+    assert inactive_target["runtime"]["target_ready"] is False
 
 
 def test_mqtt_status_payload_includes_target_readiness():

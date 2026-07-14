@@ -145,6 +145,9 @@ def status_payload(
     active_device_id = current_state.device_id if current_state else None
     target_risks = target_readiness.get("risks", []) if isinstance(target_readiness, dict) else []
     target_safe = bool(target_readiness.get("safe_for_live_control")) if isinstance(target_readiness, dict) else True
+    target_ready_for_live_control = (
+        bool(target_readiness.get("ready_for_live_control")) if isinstance(target_readiness, dict) else bool(target_safe and not target_risks)
+    )
     if not spotify_configured:
         status = "spotify_not_configured"
         message = "Pair Spotify in the bridge setup console."
@@ -154,13 +157,13 @@ def status_payload(
     elif current_state is None:
         status = "no_active_playback"
         message = "Start Spotify playback on a target device."
-    elif target_risks and not target_safe:
+    elif not target_ready_for_live_control:
         status = "target_not_ready"
         message = "Target device is not ready for live control."
     else:
         status = "ready"
         message = "Ready"
-    target_ready = bool(target_safe and not target_risks and target_device_id)
+    target_ready = bool(target_ready_for_live_control and target_device_id)
     runtime_state = {
         "backend": "local_spotify_bridge",
         "transport": "spotify_web_api",
