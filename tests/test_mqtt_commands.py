@@ -12,6 +12,8 @@ def test_mqtt_command_policy_marks_playback_followups():
     assert mqtt_command_policy("next").follow_up_refresh is True
     assert mqtt_command_policy("next").playback_affecting is True
     assert mqtt_command_policy("seek").playback_affecting is True
+    assert mqtt_command_policy("shuffle_set").playback_affecting is True
+    assert mqtt_command_policy("repeat_set").playback_affecting is True
     assert mqtt_command_policy("transfer").refresh_devices is True
     assert mqtt_command_policy("volume_set").follow_up_refresh is True
     assert mqtt_command_policy("unknown").follow_up_refresh is False

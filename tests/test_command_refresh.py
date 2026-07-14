@@ -1193,6 +1193,46 @@ async def test_mqtt_seek_refuses_configured_target_that_is_not_ready(monkeypatch
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("command_type", "payload"),
+    [
+        ("shuffle_set", {"enabled": True}),
+        ("repeat_set", {"mode": "context"}),
+    ],
+)
+async def test_mqtt_playback_mode_commands_refuse_configured_target_that_is_not_ready(
+    monkeypatch,
+    command_type,
+    payload,
+):
+    client = FakeCommandSpotifyClient()
+    status_pulses = []
+
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None):
+        status_pulses.append((command_type, command_request_id, command_pending, command_ok, command_error))
+
+    monkeypatch.setattr(main, "spotify", client)
+    monkeypatch.setattr(main.store, "get_target_device", lambda: main.TargetDevice(device_id="speaker-2"))
+    monkeypatch.setattr(main, "publish_mqtt_status", fake_publish_mqtt_status)
+
+    command = {"request_id": f"knob-{command_type}-unready", "type": command_type, **payload}
+    with pytest.raises(main.TargetNotReadyForLiveControl):
+        await main.handle_mqtt_command(command)
+
+    assert client.calls == []
+    assert status_pulses == [
+        (command_type, f"knob-{command_type}-unready", True, None, None),
+        (
+            command_type,
+            f"knob-{command_type}-unready",
+            False,
+            False,
+            f"{command_type} target is not ready for live control: inactive_device,volume_unavailable",
+        ),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_rest_target_changes_publish_status_pulse(monkeypatch):
     status_pulses = []
     targets = []

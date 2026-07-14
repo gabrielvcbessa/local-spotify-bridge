@@ -2443,12 +2443,18 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
             enabled = command.get("enabled")
             if not isinstance(enabled, bool):
                 raise ValueError("shuffle_set requires boolean enabled.")
-            await spotify.set_shuffle(enabled, await command_device_id(spotify, command.get("device_id")))
+            await spotify.set_shuffle(
+                enabled,
+                await verified_live_control_device_id(spotify, command.get("device_id"), command_type=command_type),
+            )
         elif command_type == "repeat_set":
             mode = command.get("mode")
             if not isinstance(mode, str):
                 raise ValueError("repeat_set requires string mode.")
-            await spotify.set_repeat(mode, await command_device_id(spotify, command.get("device_id")))
+            await spotify.set_repeat(
+                mode,
+                await verified_live_control_device_id(spotify, command.get("device_id"), command_type=command_type),
+            )
         elif command_type == "save_current_track":
             await spotify.save_track(track_id_from_command_or_state(command, broker.current_state))
         elif command_type == "unsave_current_track":
