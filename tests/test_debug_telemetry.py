@@ -272,11 +272,15 @@ def test_debug_dashboard_serves_html():
     response = TestClient(app).get("/debug")
 
     assert response.status_code == 200
-    assert "Local Spotify Bridge Debug" in response.text
+    assert "Local Spotify Bridge Setup Console" in response.text
+    assert "Backend Setup" in response.text
+    assert "Backend setup tabs" in response.text
+    assert "Spotify Bridge" in response.text
+    assert "MQTT Knob" in response.text
     assert "/v1/debug/status" in response.text
     assert "/v1/debug/events" in response.text
     assert "Last MQTT Command" in response.text
-    assert "Spotify Connection" in response.text
+    assert "Spotify Web API" in response.text
     assert "Target Readiness" in response.text
     assert "Backend Contract" in response.text
     assert "Consumer Decision" in response.text

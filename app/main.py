@@ -351,6 +351,41 @@ def debug_dashboard_html() -> str:
       flex-wrap: wrap;
       margin-bottom: 12px;
     }
+    .tabs {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 8px 0 14px;
+    }
+    .tab {
+      border: 1px solid #354652;
+      border-radius: 999px;
+      padding: 7px 10px;
+      color: #b9c5cc;
+      background: #111820;
+      font-size: 13px;
+      font-weight: 650;
+    }
+    .tab.active {
+      color: #e7ecef;
+      border-color: #3f9f8d;
+      background: #1f4c45;
+    }
+    .setup-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+    }
+    .setup-pane {
+      border: 1px solid #29333b;
+      border-radius: 8px;
+      padding: 12px;
+      background: #111820;
+    }
+    .setup-pane h3 {
+      margin: 0 0 8px;
+      font-size: 14px;
+    }
     button {
       background: #22303a;
       color: #e7ecef;
@@ -465,11 +500,44 @@ def debug_dashboard_html() -> str:
   <main>
     <header>
       <div>
-        <h1>Local Spotify Bridge Debug</h1>
+        <h1>Local Spotify Bridge Setup Console</h1>
         <div class="muted" id="updated">Loading...</div>
       </div>
       <button id="refresh">Refresh</button>
     </header>
+
+    <section class="panel" style="margin-bottom: 16px;">
+      <h2>Backend Setup</h2>
+      <div class="tabs" aria-label="Backend setup tabs">
+        <span class="tab active">Spotify Bridge</span>
+        <span class="tab">MQTT Knob</span>
+        <span class="tab">Diagnostics</span>
+      </div>
+      <div class="setup-grid">
+        <div class="setup-pane">
+          <h3>Spotify Web API</h3>
+          <div class="metric" id="spotifyConnection">-</div>
+          <div class="muted" id="spotifyConnectionDetail"></div>
+          <div class="toolbar" style="margin: 10px 0 0;">
+            <button id="spotifyPair">Pair</button>
+            <button class="danger" id="spotifyDisconnect">Disconnect</button>
+          </div>
+          <div class="muted" id="spotifyActionStatus"></div>
+        </div>
+        <div class="setup-pane">
+          <h3>Target Readiness</h3>
+          <div class="metric" id="targetReadiness">-</div>
+          <div class="muted" id="targetReadinessDetail"></div>
+          <div class="muted" id="targetReadinessMeta"></div>
+        </div>
+        <div class="setup-pane">
+          <h3>Backend Contract</h3>
+          <div class="metric" id="backendContract">-</div>
+          <div class="muted" id="backendContractDetail"></div>
+          <div class="muted" id="backendContractMeta"></div>
+        </div>
+      </div>
+    </section>
 
     <section class="grid">
       <div class="panel">
@@ -481,28 +549,6 @@ def debug_dashboard_html() -> str:
         <h2>Consumers</h2>
         <div class="metric" id="consumersActive">-</div>
         <div class="muted" id="consumersDetail"></div>
-      </div>
-      <div class="panel">
-        <h2>Spotify Connection</h2>
-        <div class="metric" id="spotifyConnection">-</div>
-        <div class="muted" id="spotifyConnectionDetail"></div>
-        <div class="toolbar" style="margin: 10px 0 0;">
-          <button id="spotifyPair">Pair</button>
-          <button class="danger" id="spotifyDisconnect">Disconnect</button>
-        </div>
-        <div class="muted" id="spotifyActionStatus"></div>
-      </div>
-      <div class="panel">
-        <h2>Target Readiness</h2>
-        <div class="metric" id="targetReadiness">-</div>
-        <div class="muted" id="targetReadinessDetail"></div>
-        <div class="muted" id="targetReadinessMeta"></div>
-      </div>
-      <div class="panel">
-        <h2>Backend Contract</h2>
-        <div class="metric" id="backendContract">-</div>
-        <div class="muted" id="backendContractDetail"></div>
-        <div class="muted" id="backendContractMeta"></div>
       </div>
       <div class="panel">
         <h2>Stored Events</h2>
