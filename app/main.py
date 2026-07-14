@@ -361,6 +361,14 @@ def debug_dashboard_html() -> str:
       background: #2b6f61;
       border-color: #3f9f8d;
     }
+    button.danger {
+      background: #4a2630;
+      border-color: #7a3d4a;
+    }
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.5;
+    }
     table {
       width: 100%;
       border-collapse: collapse;
@@ -471,6 +479,16 @@ def debug_dashboard_html() -> str:
         <h2>Consumers</h2>
         <div class="metric" id="consumersActive">-</div>
         <div class="muted" id="consumersDetail"></div>
+      </div>
+      <div class="panel">
+        <h2>Spotify Connection</h2>
+        <div class="metric" id="spotifyConnection">-</div>
+        <div class="muted" id="spotifyConnectionDetail"></div>
+        <div class="toolbar" style="margin: 10px 0 0;">
+          <button id="spotifyPair">Pair</button>
+          <button class="danger" id="spotifyDisconnect">Disconnect</button>
+        </div>
+        <div class="muted" id="spotifyActionStatus"></div>
       </div>
       <div class="panel">
         <h2>Stored Events</h2>
@@ -663,6 +681,12 @@ def debug_dashboard_html() -> str:
       document.getElementById("consumersActive").textContent = health.polling.active_consumers_detected ? "active" : "idle";
       document.getElementById("consumersDetail").textContent =
         "WS " + health.consumers.websocket_count + ", MQTT " + (health.consumers.mqtt_active ? "active" : "inactive");
+      const tokenSource = health.spotify_refresh_token_source || "none";
+      document.getElementById("spotifyConnection").textContent = health.spotify_configured ? "connected" : "not paired";
+      document.getElementById("spotifyConnection").className = "metric " + (health.spotify_configured ? "ok" : "warn");
+      document.getElementById("spotifyConnectionDetail").textContent =
+        "token source " + tokenSource + ", auth app " + (health.spotify_auth_configured ? "configured" : "missing");
+      document.getElementById("spotifyDisconnect").disabled = tokenSource === "none";
       const idle = health.consumer_idle_explanation || {};
       const idleAge = idle.mqtt_last_activity_age_seconds == null ? "no MQTT activity" : Math.round(idle.mqtt_last_activity_age_seconds) + "s ago";
       document.getElementById("consumerReason").textContent = idle.reason || "-";
@@ -871,7 +895,31 @@ def debug_dashboard_html() -> str:
       render(await response.json());
     }
 
+    async function startSpotifyPairing() {
+      const status = document.getElementById("spotifyActionStatus");
+      status.textContent = "Requesting Spotify authorization URL...";
+      const response = await fetch("/v1/auth/login");
+      const payload = await response.json();
+      if (!response.ok) {
+        status.textContent = payload.detail || "Spotify pairing is not configured.";
+        return;
+      }
+      status.textContent = "Opening Spotify authorization...";
+      window.open(payload.authorize_url, "_blank", "noopener");
+    }
+
+    async function disconnectSpotify() {
+      const status = document.getElementById("spotifyActionStatus");
+      status.textContent = "Disconnecting Spotify...";
+      const response = await fetch("/v1/auth/token", {method: "DELETE"});
+      const payload = await response.json();
+      status.textContent = payload.message || (response.ok ? "Spotify disconnected." : "Disconnect failed.");
+      await refresh();
+    }
+
     document.getElementById("refresh").onclick = refresh;
+    document.getElementById("spotifyPair").onclick = startSpotifyPairing;
+    document.getElementById("spotifyDisconnect").onclick = disconnectSpotify;
     document.getElementById("recentPrev").onclick = () => {
       recentOffset = Math.max(0, recentOffset - recentLimit);
       loadRecent();
