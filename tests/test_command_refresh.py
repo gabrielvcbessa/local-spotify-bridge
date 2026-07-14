@@ -670,12 +670,14 @@ async def test_mqtt_unsave_track_falls_back_to_current_state(monkeypatch):
 async def test_mqtt_play_pause_does_not_use_implicit_target_device(monkeypatch):
     client = FakeCommandSpotifyClient()
     refreshes = []
+    status_pulses = []
 
     async def fake_refresh_and_publish(_client, *, follow_up_delays=(), force_publish=False):
-        refreshes.append(tuple(follow_up_delays))
+        refreshes.append((tuple(follow_up_delays), force_publish))
 
     async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None, command_metadata=None):
-        _ = (command_type, command_request_id, command_pending, command_ok)
+        _ = command_error
+        status_pulses.append((command_type, command_request_id, command_pending, command_ok, command_metadata))
         return None
 
     monkeypatch.setattr(main, "spotify", client)
@@ -687,6 +689,7 @@ async def test_mqtt_play_pause_does_not_use_implicit_target_device(monkeypatch):
         await main.handle_mqtt_command({"type": "play_pause"})
         main.broker.current_state = PlaybackSnapshot(is_playing=False)
         await main.handle_mqtt_command({"type": "play_pause"})
+        await main.handle_mqtt_command({"request_id": "knob-play-1", "type": "play", "device_id": "speaker-1"})
         await main.handle_mqtt_command({"type": "pause", "device_id": "speaker-1"})
     finally:
         main.broker.current_state = None
@@ -694,12 +697,24 @@ async def test_mqtt_play_pause_does_not_use_implicit_target_device(monkeypatch):
     assert client.calls == [
         ("pause", None),
         ("play", None),
+        ("play", "speaker-1"),
         ("pause", "speaker-1"),
     ]
     assert refreshes == [
-        main.settings.command_followup_refresh_delays_for("play_pause"),
-        main.settings.command_followup_refresh_delays_for("play_pause"),
-        main.settings.command_followup_refresh_delays_for("pause"),
+        (main.settings.command_followup_refresh_delays_for("play_pause"), True),
+        (main.settings.command_followup_refresh_delays_for("play_pause"), True),
+        (main.settings.command_followup_refresh_delays_for("play"), True),
+        (main.settings.command_followup_refresh_delays_for("pause"), True),
+    ]
+    assert status_pulses == [
+        ("play_pause", None, True, None, None),
+        ("play_pause", None, False, True, {"playback_affecting": True}),
+        ("play_pause", None, True, None, None),
+        ("play_pause", None, False, True, {"playback_affecting": True}),
+        ("play", "knob-play-1", True, None, None),
+        ("play", "knob-play-1", False, True, {"playback_affecting": True}),
+        ("pause", None, True, None, None),
+        ("pause", None, False, True, {"playback_affecting": True}),
     ]
 
 
