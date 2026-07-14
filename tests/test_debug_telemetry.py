@@ -124,6 +124,7 @@ def test_health_exposes_consumer_detection_and_current_polling_thresholds():
     assert "background_effective_interval_seconds" in polling
     assert "playlist_effective_interval_seconds" in polling
     assert payload["mqtt_protocol"]["schema_version"] == 2
+    assert "command_device_refresh_result" in payload["mqtt_protocol"]["features"]
     assert payload["backend_capabilities"]["backend"] == "local_spotify_bridge"
     assert payload["backend_capabilities"]["transport"] == "spotify_web_api"
     assert payload["backend_capabilities"]["architecture"]["role"] == "lan_spotify_web_api_proxy"
@@ -287,6 +288,8 @@ def test_debug_dashboard_serves_html():
     assert "targetReadinessMeta" in response.text
     assert "backendContractDetail" in response.text
     assert "backendContractMeta" in response.text
+    assert "command device refresh " in response.text
+    assert "command_device_refresh_result" in response.text
     assert "/v1/auth/token" in response.text
     assert "mqttRetainedRows" in response.text
     assert "consumerReasonDetail" in response.text

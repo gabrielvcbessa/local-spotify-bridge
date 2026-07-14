@@ -740,6 +740,7 @@ def debug_dashboard_html() -> str:
         ", checked " + (readiness.checked_at || "-");
       const capabilities = health.backend_capabilities || {};
       const protocol = health.mqtt_protocol || {};
+      const protocolFeatures = Array.isArray(protocol.features) ? protocol.features : [];
       const library = capabilities.library || {};
       const devices = capabilities.devices || {};
       const art = capabilities.art || {};
@@ -751,7 +752,9 @@ def debug_dashboard_html() -> str:
         ", role " + (architecture.role || "-");
       document.getElementById("backendContractMeta").textContent =
         "library recent " + yesNo(library.recent_tracks) + ", devices readiness " + yesNo(devices.readiness) +
-        ", RGB565 art " + yesNo(art.rgb565) + ", on-device direct Spotify " + yesNo(architecture.direct_spotify_on_device);
+        ", RGB565 art " + yesNo(art.rgb565) + ", command device refresh " +
+        yesNo(protocolFeatures.includes("command_device_refresh_result")) +
+        ", on-device direct Spotify " + yesNo(architecture.direct_spotify_on_device);
       const idle = health.consumer_idle_explanation || {};
       const idleAge = idle.mqtt_last_activity_age_seconds == null ? "no MQTT activity" : Math.round(idle.mqtt_last_activity_age_seconds) + "s ago";
       document.getElementById("consumerReason").textContent = idle.reason || "-";
