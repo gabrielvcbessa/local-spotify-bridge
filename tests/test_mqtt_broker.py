@@ -367,6 +367,7 @@ def test_mqtt_status_payload_preserves_command_outcome():
             "state_refresh_ok": True,
             "state_publish_forced": True,
             "state_version": 12,
+            "track_saved": True,
         },
     )
     failure = status_payload(
@@ -390,6 +391,7 @@ def test_mqtt_status_payload_preserves_command_outcome():
     assert success["last_command"]["state_refresh_ok"] is True
     assert success["last_command"]["state_publish_forced"] is True
     assert success["last_command"]["state_version"] == 12
+    assert success["last_command"]["track_saved"] is True
     assert failure["last_command"]["ok"] is False
     assert failure["last_command"]["error"] == "target device is not safe"
 

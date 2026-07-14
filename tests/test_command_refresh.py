@@ -687,7 +687,7 @@ async def test_mqtt_save_track_uses_payload_track_uri_and_publishes_status(monke
         refreshes.append(tuple(follow_up_delays))
 
     async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None, command_metadata=None):
-        status_pulses.append((command_type, command_request_id, command_pending, command_ok))
+        status_pulses.append((command_type, command_request_id, command_pending, command_ok, command_metadata))
 
     monkeypatch.setattr(main, "spotify", client)
     monkeypatch.setattr(main, "refresh_and_publish", fake_refresh_and_publish)
@@ -704,9 +704,22 @@ async def test_mqtt_save_track_uses_payload_track_uri_and_publishes_status(monke
     assert client.calls == [("save_track", "track-1")]
     assert refreshes == [main.settings.command_followup_refresh_delays_for("save_current_track")]
     assert status_pulses == [
-        ("save_current_track", "knob-like-1", True, None),
-        ("save_current_track", "knob-like-1", False, True),
-        ("save_current_track", "knob-like-1", False, True),
+        ("save_current_track", "knob-like-1", True, None, None),
+        ("save_current_track", "knob-like-1", False, True, {"playback_affecting": False}),
+        (
+            "save_current_track",
+            "knob-like-1",
+            False,
+            True,
+            {
+                "state_version": main.broker.version,
+                "published_state": None,
+                "state_refresh_ok": None,
+                "state_publish_forced": True,
+                "playback_affecting": False,
+                "track_saved": True,
+            },
+        ),
     ]
 
 
@@ -720,7 +733,7 @@ async def test_mqtt_unsave_track_falls_back_to_current_state(monkeypatch):
         refreshes.append(tuple(follow_up_delays))
 
     async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None, command_metadata=None):
-        status_pulses.append((command_type, command_request_id, command_pending, command_ok))
+        status_pulses.append((command_type, command_request_id, command_pending, command_ok, command_metadata))
 
     monkeypatch.setattr(main, "spotify", client)
     monkeypatch.setattr(main, "refresh_and_publish", fake_refresh_and_publish)
@@ -735,9 +748,22 @@ async def test_mqtt_unsave_track_falls_back_to_current_state(monkeypatch):
     assert client.calls == [("remove_saved_track", "track-2")]
     assert refreshes == [main.settings.command_followup_refresh_delays_for("unsave_current_track")]
     assert status_pulses == [
-        ("unsave_current_track", "knob-unlike-1", True, None),
-        ("unsave_current_track", "knob-unlike-1", False, True),
-        ("unsave_current_track", "knob-unlike-1", False, True),
+        ("unsave_current_track", "knob-unlike-1", True, None, None),
+        ("unsave_current_track", "knob-unlike-1", False, True, {"playback_affecting": False}),
+        (
+            "unsave_current_track",
+            "knob-unlike-1",
+            False,
+            True,
+            {
+                "state_version": main.broker.version,
+                "published_state": None,
+                "state_refresh_ok": None,
+                "state_publish_forced": True,
+                "playback_affecting": False,
+                "track_saved": False,
+            },
+        ),
     ]
 
 

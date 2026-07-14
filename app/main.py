@@ -2029,6 +2029,7 @@ def mqtt_status_payload(
                 "state_publish_forced",
                 "device_refresh_ok",
                 "published_devices",
+                "track_saved",
             ):
                 if key in command_metadata:
                     command_pulse[key] = command_metadata[key]
@@ -2669,6 +2670,10 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
             "state_publish_forced": True,
             "playback_affecting": command_policy.playback_affecting,
         }
+        if command_type == "save_current_track":
+            result["track_saved"] = True
+        elif command_type == "unsave_current_track":
+            result["track_saved"] = False
         if device_refresh_ok is not None:
             result["device_refresh_ok"] = device_refresh_ok
             result["published_devices"] = device_refresh_ok
