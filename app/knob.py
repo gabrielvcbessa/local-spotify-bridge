@@ -82,6 +82,7 @@ def knob_snapshot(
         "artists": state.artists,
         "artist_text": artist_text,
         "album": state.album,
+        "saved": state.item_saved,
     }
     modes = {"shuffle": state.shuffle_state, "repeat": state.repeat_state}
     art = knob_art_payload(state, base_url, art_options)

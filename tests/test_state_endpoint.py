@@ -5,6 +5,7 @@ from app.knob import knob_snapshot
 import app.main as main
 from app.main import app, broker
 from app.models import PlaybackSnapshot
+from app.mqtt_contract import mqtt_protocol_payload
 
 
 def test_state_adds_stable_knob_art_url_and_version():
@@ -56,21 +57,7 @@ def test_mqtt_knob_config_defaults_to_stopwatch_art_size():
 
     assert main.mqtt_art_options().size == 360
     assert config["schema_version"] == 2
-    assert config["protocol"] == {
-        "name": "rotary-mqtt-knob",
-        "schema_version": 2,
-        "min_client_schema_version": 2,
-        "max_client_schema_version": 2,
-        "features": [
-            "control_state",
-            "library_browse",
-            "devices",
-            "command_request_id",
-            "idempotent_command_result",
-            "command_latency",
-            "retained_rgb565_art",
-        ],
-    }
+    assert config["protocol"] == mqtt_protocol_payload()
     assert config["topics"]["control_state"] == "rotary/knob/control_state"
     assert config["retain"]["control_state"] is True
     assert config["http"]["art_url"] == (
@@ -127,6 +114,7 @@ def test_knob_snapshot_shapes_render_contract_and_hashes(monkeypatch):
         duration_ms=180000,
         item_id="spotify-track-id",
         item_uri="spotify:track:spotify-track-id",
+        item_saved=True,
         title="Song name",
         artists=["Artist 1", "Artist 2"],
         album="Album name",
@@ -186,6 +174,7 @@ def test_knob_snapshot_shapes_render_contract_and_hashes(monkeypatch):
     ]
     assert payload["is_playing"] is True
     assert payload["track"]["artist_text"] == "Artist 1, Artist 2"
+    assert payload["track"]["saved"] is True
     assert payload["next_track"]["title"] == "Next song"
     assert payload["next_track"]["art"] == {
         "id": "ab67616d0000b273next",
