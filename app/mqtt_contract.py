@@ -82,6 +82,22 @@ MQTT_KNOB_BACKEND_CAPABILITIES: dict[str, Any] = {
         "list": True,
         "transfer": True,
         "readiness": True,
+        "readiness_contract": {
+            "safe_for_live_control": "resolved_unrestricted_target",
+            "ready_for_live_control": "resolved_unrestricted_active_volume_controllable_nonzero_target",
+            "risk_taxonomy": [
+                "target_not_configured",
+                "devices_not_cached",
+                "target_not_found",
+                "missing_device_id",
+                "restricted_device",
+                "inactive_device",
+                "volume_unavailable",
+                "zero_volume",
+            ],
+            "muted_or_zero_volume_field": True,
+            "last_update_at_field": True,
+        },
         "volume_control": True,
     },
     "art": {

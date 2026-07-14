@@ -604,6 +604,12 @@ token-storage hardening are solved. The same architecture block advertises
 `profile_model=single_bridge_profile` and `multi_profile_selection=false`; multi-profile backend
 switching remains blocked until a profile registry exists. Config also includes a `protocol` block:
 
+The `devices.readiness_contract` capability documents the target safety vocabulary clients should
+expect in retained `status.target_readiness`: `safe_for_live_control` means the target resolves and
+is not restricted, while `ready_for_live_control` additionally requires the device to be active,
+volume-controllable, and above zero volume. Its `risk_taxonomy` lists the stable setup states clients
+can render without guessing.
+
 ```json
 {
   "name": "rotary-mqtt-knob",

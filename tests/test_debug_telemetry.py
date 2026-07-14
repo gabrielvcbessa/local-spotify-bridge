@@ -134,6 +134,7 @@ def test_health_exposes_consumer_detection_and_current_polling_thresholds():
     assert payload["backend_capabilities"]["architecture"]["multi_profile_selection"] is False
     assert payload["backend_capabilities"]["library"]["recent_tracks"] is True
     assert payload["backend_capabilities"]["devices"]["readiness"] is True
+    assert "zero_volume" in payload["backend_capabilities"]["devices"]["readiness_contract"]["risk_taxonomy"]
     assert payload["backend_capabilities"]["art"]["rgb565"] is True
     assert "mqtt_commands" in payload
     assert "consumer_idle_explanation" in payload
