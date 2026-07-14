@@ -119,7 +119,7 @@ async def test_auth_disconnect_publishes_status(monkeypatch):
         def disconnect_runtime_credentials(self):
             return False
 
-    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None):
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None, command_metadata=None):
         status_pulses.append((command_type, command_request_id, command_pending, command_ok, command_error))
 
     monkeypatch.setattr(main, "publish_mqtt_status", fake_publish_mqtt_status)

@@ -659,7 +659,10 @@ snapshot yet. Successful pulses include `ok:true`; failed MQTT command pulses in
 an `error` string when the bridge has a concrete failure reason. MQTT commands include the original
 `request_id` in that pulse when one was supplied, so clients can use retained status as a backup
 acknowledgement if they miss the non-retained `command_result` and `runtime.command_pending` is
-false.
+false. When the bridge advertises `command_result_metadata`, retained `last_command` pulses can also
+include the same stable `ignored`, `reason`, `playback_affecting`, `state_version`,
+`published_state`, `state_refresh_ok`, and `state_publish_forced` fields as `command_result`, giving
+low-power clients enough fallback context to avoid showing a misleading success toast.
 
 MQTT command examples:
 

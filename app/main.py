@@ -1848,6 +1848,7 @@ def mqtt_status_payload(
     command_pending: bool | None = None,
     command_ok: bool | None = None,
     command_error: str | None = None,
+    command_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     command_pulse = None
     if command_type:
@@ -1861,6 +1862,18 @@ def mqtt_status_payload(
             command_pulse["ok"] = command_ok
         if command_error:
             command_pulse["error"] = command_error
+        if command_metadata:
+            for key in (
+                "ignored",
+                "reason",
+                "playback_affecting",
+                "state_version",
+                "published_state",
+                "state_refresh_ok",
+                "state_publish_forced",
+            ):
+                if key in command_metadata:
+                    command_pulse[key] = command_metadata[key]
     spotify_configured = bool(getattr(spotify, "spotify_configured", False))
     return status_payload(
         version=broker.version,
@@ -1882,6 +1895,7 @@ async def publish_mqtt_status(
     command_pending: bool | None = None,
     command_ok: bool | None = None,
     command_error: str | None = None,
+    command_metadata: dict[str, Any] | None = None,
     force_publish: bool = False,
 ) -> None:
     await broker.publish_mqtt_retained(
@@ -1892,6 +1906,7 @@ async def publish_mqtt_status(
             command_pending=command_pending,
             command_ok=command_ok,
             command_error=command_error,
+            command_metadata=command_metadata,
         ),
         force=force_publish,
     )
@@ -2404,13 +2419,7 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
             if not 0 <= volume_percent <= 100:
                 raise ValueError("volume_percent must be between 0 and 100.")
             if broker.current_state and not broker.current_state.volume_control_supported:
-                await publish_mqtt_status(
-                    command_type=command_type,
-                    command_request_id=request_id,
-                    command_pending=False,
-                    command_ok=True,
-                )
-                return {
+                result = {
                     "ignored": True,
                     "reason": "volume_control_unsupported",
                     "state_version": broker.version,
@@ -2419,6 +2428,14 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
                     "state_publish_forced": False,
                     "playback_affecting": command_policy.playback_affecting,
                 }
+                await publish_mqtt_status(
+                    command_type=command_type,
+                    command_request_id=request_id,
+                    command_pending=False,
+                    command_ok=True,
+                    command_metadata=result,
+                )
+                return result
             await spotify.set_volume(volume_percent, await command_device_id(spotify, command.get("device_id")))
         elif command_type == "seek":
             position_ms = command.get("position_ms")
@@ -2478,6 +2495,7 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
             command_request_id=request_id,
             command_pending=False,
             command_ok=True,
+            command_metadata={"playback_affecting": command_policy.playback_affecting},
         )
         if command_policy.refresh_devices:
             await refresh_devices_after_successful_command(spotify)
