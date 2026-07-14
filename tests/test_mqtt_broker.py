@@ -14,9 +14,13 @@ from app.store import TargetDevice
 class FakeMqttClient:
     def __init__(self) -> None:
         self.published: list[tuple[str, str, int, bool]] = []
+        self.subscribed: list[tuple[str, int]] = []
 
     def publish(self, topic: str, payload: str, qos: int = 0, retain: bool = False):
         self.published.append((topic, payload, qos, retain))
+
+    def subscribe(self, topic: str, qos: int = 0):
+        self.subscribed.append((topic, qos))
 
 
 @pytest.mark.anyio
@@ -523,6 +527,41 @@ def test_mqtt_status_payload_includes_target_readiness():
 
     assert payload["target_readiness"] == readiness
     assert mqtt_payload_fingerprint(payload).startswith("hash:")
+
+
+def test_mqtt_connection_status_tracks_connect_and_disconnect():
+    broker = ConnectionBroker(Settings(MQTT_ENABLED=True))
+    mqtt = FakeMqttClient()
+
+    assert broker.mqtt_connection_status() == {
+        "enabled": True,
+        "client_configured": False,
+        "connected": False,
+        "last_connect_at": None,
+        "last_disconnect_at": None,
+        "last_disconnect_reason": None,
+    }
+
+    broker._mqtt_client = mqtt
+    broker._on_mqtt_connect(mqtt, None, None, 0, None)
+
+    connected = broker.mqtt_connection_status()
+    assert connected["client_configured"] is True
+    assert connected["connected"] is True
+    assert connected["last_connect_at"] is not None
+    assert connected["last_disconnect_reason"] is None
+    assert mqtt.subscribed == [
+        ("rotary/knob/command", 1),
+        ("rotary/knob/request", 1),
+        ("rotary/knob/availability", 1),
+    ]
+
+    broker._on_mqtt_disconnect(mqtt, None, None, "network_lost", None)
+
+    disconnected = broker.mqtt_connection_status()
+    assert disconnected["connected"] is False
+    assert disconnected["last_disconnect_at"] is not None
+    assert disconnected["last_disconnect_reason"] == "network_lost"
 
 
 @pytest.mark.anyio

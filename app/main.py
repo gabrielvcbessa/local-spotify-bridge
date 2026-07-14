@@ -258,6 +258,7 @@ async def health() -> dict[str, Any]:
     target = store.get_target_device()
     consumer_active = has_active_consumers()
     consumers = broker.consumer_status(ttl_seconds=settings.active_consumer_ttl_seconds)
+    mqtt_connection = broker.mqtt_connection_status()
     idle_explanation = consumer_idle_explanation(consumers)
     playback_lower_bound = (
         settings.poll_interval_seconds
@@ -284,6 +285,8 @@ async def health() -> dict[str, Any]:
         "mqtt_protocol": mqtt_protocol_payload(),
         "backend_capabilities": MQTT_KNOB_BACKEND_CAPABILITIES,
         "mqtt_enabled": settings.mqtt_enabled,
+        "mqtt_connected": mqtt_connection["connected"],
+        "mqtt_connection": mqtt_connection,
         "state_version": broker.version,
         "last_spotify_error": broker.last_spotify_error,
         "last_poll_at": broker.last_poll_at,
@@ -2181,7 +2184,7 @@ def mqtt_status_payload(
         last_error=broker.last_spotify_error,
         current_state=broker.current_state,
         target=status_target,
-        mqtt_connected=settings.mqtt_enabled,
+        mqtt_connected=broker.mqtt_connected,
         command_pending=bool(broker.pending_mqtt_command) if command_pending is None else command_pending,
         command_pulse=command_pulse,
         target_readiness=target_readiness,

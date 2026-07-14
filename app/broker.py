@@ -96,6 +96,10 @@ class ConnectionBroker:
         self.last_mqtt_availability_at: str | None = None
         self.last_mqtt_activity: dict[str, Any] | None = None
         self.last_mqtt_activity_at: str | None = None
+        self.last_mqtt_connect_at: str | None = None
+        self.last_mqtt_disconnect_at: str | None = None
+        self.last_mqtt_disconnect_reason: str | None = None
+        self.mqtt_connected = False
         self.last_mqtt_command: dict[str, Any] | None = None
         self.last_mqtt_command_at: str | None = None
         self.last_mqtt_command_result: dict[str, Any] | None = None
@@ -143,6 +147,7 @@ class ConnectionBroker:
         if self._settings.mqtt_username:
             client.username_pw_set(self._settings.mqtt_username, self._settings.mqtt_password or None)
         client.on_connect = self._on_mqtt_connect
+        client.on_disconnect = self._on_mqtt_disconnect
         client.on_message = self._on_mqtt_message
         client.connect(self._settings.mqtt_host, self._settings.mqtt_port, 60)
         client.loop_start()
@@ -156,6 +161,7 @@ class ConnectionBroker:
             self._mqtt_client.disconnect()
             self._mqtt_client = None
             self._mqtt_loop = None
+            self.mqtt_connected = False
 
     @property
     def version(self) -> int:
@@ -308,6 +314,16 @@ class ConnectionBroker:
             "ttl_seconds": ttl_seconds,
         }
 
+    def mqtt_connection_status(self) -> dict[str, Any]:
+        return {
+            "enabled": self._settings.mqtt_enabled,
+            "client_configured": self._mqtt_client is not None,
+            "connected": self.mqtt_connected,
+            "last_connect_at": self.last_mqtt_connect_at,
+            "last_disconnect_at": self.last_mqtt_disconnect_at,
+            "last_disconnect_reason": self.last_mqtt_disconnect_reason,
+        }
+
     def retained_payload_status(self) -> list[dict[str, Any]]:
         return list(self._mqtt_retained_payloads.values())
 
@@ -457,11 +473,21 @@ class ConnectionBroker:
 
     def _on_mqtt_connect(self, client, _, __, reason_code, ___) -> None:
         if reason_code != 0:
+            self.mqtt_connected = False
+            self.last_mqtt_disconnect_reason = f"connect_failed:{reason_code}"
             self.last_spotify_error = f"MQTT connect failed: {reason_code}"
             return
+        self.mqtt_connected = True
+        self.last_mqtt_connect_at = datetime.now(UTC).isoformat()
+        self.last_mqtt_disconnect_reason = None
         client.subscribe(self.mqtt_topic("command"), qos=self._settings.mqtt_qos)
         client.subscribe(self.mqtt_topic("request"), qos=self._settings.mqtt_qos)
         client.subscribe(self.mqtt_topic("availability"), qos=self._settings.mqtt_qos)
+
+    def _on_mqtt_disconnect(self, _client, _userdata, _disconnect_flags, reason_code, _properties) -> None:
+        self.mqtt_connected = False
+        self.last_mqtt_disconnect_at = datetime.now(UTC).isoformat()
+        self.last_mqtt_disconnect_reason = str(reason_code)
 
     def _on_mqtt_message(self, _, __, message) -> None:
         if self._mqtt_loop is None:

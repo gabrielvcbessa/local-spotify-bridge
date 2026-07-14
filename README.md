@@ -207,6 +207,9 @@ block `/me/player` now-playing refreshes.
 idle lower bounds are being used. That makes it easy to confirm whether the bridge is in fast
 knob-facing mode or quiet idle mode. `/health.consumers.mqtt_last_activity_at` and
 `/health.consumers.mqtt_last_activity` show the activity source that is keeping the bridge active.
+`/health.mqtt_connected` and `/health.mqtt_connection` show the actual broker connection state,
+including the last connect/disconnect timestamps and reason, so listener activity can be separated
+from a dropped MQTT transport.
 `/health.mqtt_commands` shows the most recent MQTT command and command result, which is useful when
 debugging a button press that reached the bridge but took time to settle through Spotify Connect.
 Command results include whether a command was ignored, the reason, whether it was playback-affecting,

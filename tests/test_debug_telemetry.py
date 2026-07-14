@@ -179,6 +179,12 @@ def test_health_exposes_consumer_detection_and_current_polling_thresholds():
     assert "background_effective_interval_seconds" in polling
     assert "playlist_effective_interval_seconds" in polling
     assert payload["mqtt_protocol"]["schema_version"] == 2
+    assert payload["mqtt_connected"] is payload["mqtt_connection"]["connected"]
+    assert payload["mqtt_connection"]["enabled"] is payload["mqtt_enabled"]
+    assert payload["mqtt_connection"]["client_configured"] in {True, False}
+    assert "last_connect_at" in payload["mqtt_connection"]
+    assert "last_disconnect_at" in payload["mqtt_connection"]
+    assert "last_disconnect_reason" in payload["mqtt_connection"]
     assert "command_device_refresh_result" in payload["mqtt_protocol"]["features"]
     assert payload["backend_capabilities"]["backend"] == "local_spotify_bridge"
     assert payload["backend_capabilities"]["transport"] == "spotify_web_api"
