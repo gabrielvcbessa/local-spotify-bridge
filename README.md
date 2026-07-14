@@ -684,7 +684,8 @@ snapshot. `volume_set` is ignored with a successful command result when the curr
 Commands should include a stable `request_id`. If the same `request_id` is received again, the bridge
 replays the cached `command_result` instead of sending the command to Spotify twice. Command results
 include `received_at`, `completed_at`, `latency_ms`, and `idempotent_replay` when a cached result was
-replayed.
+replayed. Bridges advertising `command_result_metadata` also include stable `ignored`, `reason`, and
+`playback_affecting` fields when they apply.
 
 MQTT request examples for non-playback data:
 
