@@ -21,6 +21,7 @@ MQTT_KNOB_FEATURES = [
     "command_latency",
     "command_state_refresh_result",
     "command_result_metadata",
+    "status_command_metadata",
     "status_command_ok",
     "status_command_error",
     "retained_rgb565_art",
