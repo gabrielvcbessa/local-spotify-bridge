@@ -536,6 +536,42 @@ async def test_mqtt_fast_controls_use_command_follow_up_profiles(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_mqtt_ignored_volume_command_reports_explicit_result(monkeypatch):
+    client = FakeCommandSpotifyClient()
+    status_pulses = []
+    previous_state = main.broker.current_state
+
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None):
+        _ = command_error
+        status_pulses.append((command_type, command_request_id, command_pending, command_ok))
+
+    monkeypatch.setattr(main, "spotify", client)
+    monkeypatch.setattr(main, "publish_mqtt_status", fake_publish_mqtt_status)
+    main.broker.current_state = PlaybackSnapshot(volume_control_supported=False)
+    try:
+        result = await main.handle_mqtt_command(
+            {"request_id": "knob-volume-ignored", "type": "volume_set", "volume_percent": 42}
+        )
+    finally:
+        main.broker.current_state = previous_state
+
+    assert client.calls == []
+    assert result == {
+        "ignored": True,
+        "reason": "volume_control_unsupported",
+        "state_version": main.broker.version,
+        "published_state": False,
+        "state_refresh_ok": None,
+        "state_publish_forced": False,
+        "playback_affecting": False,
+    }
+    assert status_pulses == [
+        ("volume_set", "knob-volume-ignored", True, None),
+        ("volume_set", "knob-volume-ignored", False, True),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_mqtt_command_success_survives_refresh_failure(monkeypatch):
     client = FakeCommandSpotifyClient()
     status_pulses = []

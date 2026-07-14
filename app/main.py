@@ -2410,7 +2410,15 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
                     command_pending=False,
                     command_ok=True,
                 )
-                return {"ignored": True, "reason": "volume_control_unsupported"}
+                return {
+                    "ignored": True,
+                    "reason": "volume_control_unsupported",
+                    "state_version": broker.version,
+                    "published_state": False,
+                    "state_refresh_ok": None,
+                    "state_publish_forced": False,
+                    "playback_affecting": command_policy.playback_affecting,
+                }
             await spotify.set_volume(volume_percent, await command_device_id(spotify, command.get("device_id")))
         elif command_type == "seek":
             position_ms = command.get("position_ms")
