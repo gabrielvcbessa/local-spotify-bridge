@@ -581,9 +581,9 @@ The default `<device_id>` is `knob`; set `MQTT_KNOB_DEVICE_ID=kitchen` or anothe
 specific device. `/health` includes `mqtt_topics` when MQTT is enabled.
 
 The retained `control_state` message is a smaller retained payload for fast control surfaces. It
-includes play state, track identity/title/artist, progress/duration, device id/name/type/active
-state/volume support, shuffle, and repeat. The richer retained `state` message uses the same fields
-as `/v1/knob/snapshot`, including `payload_hash`,
+includes play state, track identity/title/artist, context label, progress/duration, device
+id/name/type/active state/volume support, shuffle, and repeat. The richer retained `state` message
+uses the same fields as `/v1/knob/snapshot`, including `payload_hash`,
 `playback_hash`, `art_hash`, `context.display_name`, device capability flags, processed art URL, and
 MQTT art metadata. When MQTT is enabled, `art`, `next_track.art`, and `previous_track.art` can include
 `mqtt_topic` and `local_cache_path`. Low-power devices can subscribe to `art.mqtt_topic` and receive

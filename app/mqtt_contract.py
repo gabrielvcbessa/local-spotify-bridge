@@ -1,6 +1,7 @@
 from typing import Any
 
 from .art import ArtOptions
+from .context_cache import playback_context_parts
 from .knob_mqtt import envelope
 from .models import PlaybackSnapshot
 
@@ -182,6 +183,17 @@ def mqtt_knob_config_payload(
 
 
 def mqtt_control_state_payload(version: int, state: PlaybackSnapshot | None) -> dict[str, Any]:
+    context: dict[str, str | None] | None = None
+    if state is not None:
+        context_parts = playback_context_parts(state)
+        context_name = context_parts["name"] or state.album
+        context = {
+            "type": context_parts["type"],
+            "uri": context_parts["uri"],
+            "id": context_parts["id"],
+            "display_name": context_name,
+            "fallback_name": state.album,
+        }
     payload: dict[str, Any] = {
         "playing": bool(state.is_playing) if state else False,
         "track_id": state.item_id if state else None,
@@ -199,6 +211,7 @@ def mqtt_control_state_payload(version: int, state: PlaybackSnapshot | None) -> 
             "volume_percent": state.device_volume_percent if state else None,
             "volume_control_supported": state.volume_control_supported if state else False,
         },
+        "context": context,
         "shuffle": state.shuffle_state if state else None,
         "repeat": state.repeat_state if state else None,
     }
