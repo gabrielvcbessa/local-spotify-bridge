@@ -1169,6 +1169,7 @@ async def transfer_playback(
 async def seek(command: SeekCommand, client: Annotated[SpotifyClient, Depends(spotify_client)] = spotify):
     try:
         await client.seek(command.position_ms, await command_device_id(client, command.device_id))
+        await publish_mqtt_status(command_type="seek", command_ok=True)
         await refresh_and_publish(client)
     except Exception as exc:
         raise translate_spotify_error(exc) from exc
@@ -1182,6 +1183,7 @@ async def set_volume(
     try:
         device_id = await command_device_id(client, command.device_id)
         await client.set_volume(command.volume_percent, device_id)
+        await publish_mqtt_status(command_type="volume_set", command_ok=True)
         await refresh_and_publish(client)
     except Exception as exc:
         raise translate_spotify_error(exc) from exc

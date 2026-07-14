@@ -1,7 +1,7 @@
 import pytest
 
 import app.main as main
-from app.models import PlaybackCommand, PlaybackSnapshot, TargetDeviceCommand, TransferPlaybackCommand
+from app.models import PlaybackCommand, PlaybackSnapshot, SeekCommand, TargetDeviceCommand, TransferPlaybackCommand, VolumeCommand
 
 
 class FakeSpotifyClient:
@@ -32,6 +32,12 @@ class FakeCommandSpotifyClient:
 
     async def previous_track(self, device_id: str | None = None) -> None:
         self.calls.append(("previous", device_id))
+
+    async def seek(self, position_ms: int, device_id: str | None = None) -> None:
+        self.calls.append(("seek", device_id))
+
+    async def set_volume(self, volume_percent: int, device_id: str | None = None) -> None:
+        self.calls.append(("volume", device_id))
 
     async def transfer_playback(self, device_id: str, play: bool = True) -> None:
         self.calls.append(("transfer", device_id))
@@ -537,6 +543,37 @@ async def test_rest_controls_use_command_specific_follow_up_profiles(monkeypatch
         ("refresh", main.settings.command_followup_refresh_delays_for("next")),
         ("status", "previous", None),
         ("refresh", main.settings.command_followup_refresh_delays_for("previous")),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_rest_seek_and_volume_publish_status_before_refresh(monkeypatch):
+    client = FakeCommandSpotifyClient()
+    events = []
+
+    async def fake_refresh_and_publish(_client, *, follow_up_delays=()):
+        events.append(("refresh", tuple(follow_up_delays)))
+
+    async def fake_command_device_id(_client, device_id):
+        return device_id
+
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None):
+        _ = (command_request_id, command_pending)
+        events.append(("status", command_type, command_ok))
+
+    monkeypatch.setattr(main, "refresh_and_publish", fake_refresh_and_publish)
+    monkeypatch.setattr(main, "command_device_id", fake_command_device_id)
+    monkeypatch.setattr(main, "publish_mqtt_status", fake_publish_mqtt_status)
+
+    await main.seek(SeekCommand(position_ms=42000, device_id="speaker-1"), client=client)
+    await main.set_volume(VolumeCommand(volume_percent=42, device_id="speaker-2"), client=client)
+
+    assert client.calls == [("seek", "speaker-1"), ("volume", "speaker-2")]
+    assert events == [
+        ("status", "seek", True),
+        ("refresh", ()),
+        ("status", "volume_set", True),
+        ("refresh", ()),
     ]
 
 
