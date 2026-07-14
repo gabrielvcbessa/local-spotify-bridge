@@ -1745,19 +1745,31 @@ def target_device_readiness_from_devices(
     if target is None:
         return {
             "checked_at": checked_at,
+            "last_update_at": checked_at,
             "source": "cached_devices" if devices is not None else "unavailable",
             "target": None,
             "resolved_device_id": None,
             "safe_for_live_control": False,
+            "ready_for_live_control": False,
+            "active": False,
+            "restricted": False,
+            "volume_control_supported": False,
+            "muted_or_zero_volume": False,
             "risks": ["target_not_configured"],
         }
     if devices is None:
         return {
             "checked_at": checked_at,
+            "last_update_at": checked_at,
             "source": "unavailable",
             "target": target.model_dump(mode="json"),
             "resolved_device_id": None,
             "safe_for_live_control": False,
+            "ready_for_live_control": False,
+            "active": False,
+            "restricted": False,
+            "volume_control_supported": False,
+            "muted_or_zero_volume": False,
             "risks": ["devices_not_cached"],
             "device": None,
         }
@@ -1775,14 +1787,26 @@ def target_device_readiness_from_devices(
         risks.append("inactive_device")
     if isinstance(device, dict) and not device.get("supports_volume"):
         risks.append("volume_unavailable")
+    muted_or_zero_volume = isinstance(device, dict) and device.get("supports_volume") and device.get("volume_percent") == 0
+    if muted_or_zero_volume:
+        risks.append("zero_volume")
 
     safe_for_live_control = bool(device_id) and "restricted_device" not in risks
+    ready_for_live_control = safe_for_live_control and not any(
+        risk in risks for risk in ("inactive_device", "volume_unavailable", "zero_volume")
+    )
     return {
         "checked_at": checked_at,
+        "last_update_at": checked_at,
         "source": "cached_devices",
         "target": target.model_dump(mode="json"),
         "resolved_device_id": device_id if isinstance(device_id, str) else None,
         "safe_for_live_control": safe_for_live_control,
+        "ready_for_live_control": ready_for_live_control,
+        "active": bool(device.get("is_active")) if isinstance(device, dict) else False,
+        "restricted": bool(device.get("is_restricted")) if isinstance(device, dict) else False,
+        "volume_control_supported": bool(device.get("supports_volume")) if isinstance(device, dict) else False,
+        "muted_or_zero_volume": bool(muted_or_zero_volume),
         "risks": risks,
         "device": {
             "id": device.get("id"),

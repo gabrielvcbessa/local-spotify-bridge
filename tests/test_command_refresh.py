@@ -824,11 +824,17 @@ async def test_target_device_readiness_reports_risks():
     )
 
     assert readiness["safe_for_live_control"] is True
+    assert readiness["ready_for_live_control"] is False
+    assert readiness["active"] is False
+    assert readiness["volume_control_supported"] is False
+    assert readiness["muted_or_zero_volume"] is False
     assert readiness["resolved_device_id"] == "speaker-1"
     assert readiness["risks"] == ["inactive_device", "volume_unavailable"]
     assert restricted["safe_for_live_control"] is False
+    assert restricted["ready_for_live_control"] is False
     assert "restricted_device" in restricted["risks"]
     assert missing["safe_for_live_control"] is False
+    assert missing["ready_for_live_control"] is False
     assert "target_not_found" in missing["risks"]
 
 
@@ -842,6 +848,8 @@ def test_cached_target_readiness_reports_unavailable_without_device_cache(monkey
 
     assert readiness["source"] == "unavailable"
     assert readiness["safe_for_live_control"] is False
+    assert readiness["ready_for_live_control"] is False
+    assert readiness["last_update_at"] == readiness["checked_at"]
     assert readiness["risks"] == ["devices_not_cached"]
 
 
@@ -857,8 +865,25 @@ def test_mqtt_status_payload_uses_cached_target_readiness(monkeypatch):
         monkeypatch.setattr(main.store, "get_target_device", lambda: previous_target)
 
     assert payload["target_readiness"]["safe_for_live_control"] is True
+    assert payload["target_readiness"]["ready_for_live_control"] is True
+    assert payload["target_readiness"]["active"] is True
+    assert payload["target_readiness"]["volume_control_supported"] is True
+    assert payload["target_readiness"]["last_update_at"] == payload["target_readiness"]["checked_at"]
     assert payload["target_readiness"]["resolved_device_id"] == "speaker-1"
     assert payload["target_readiness"]["risks"] == []
+
+
+def test_target_device_readiness_reports_zero_volume_risk():
+    readiness = main.target_device_readiness_from_devices(
+        main.TargetDevice(device_id="speaker-1"),
+        [{"id": "speaker-1", "name": "Speaker 1", "is_active": True, "supports_volume": True, "volume_percent": 0}],
+        checked_at="2026-07-14T00:00:00+00:00",
+    )
+
+    assert readiness["safe_for_live_control"] is True
+    assert readiness["ready_for_live_control"] is False
+    assert readiness["muted_or_zero_volume"] is True
+    assert readiness["risks"] == ["zero_volume"]
 
 
 @pytest.mark.asyncio

@@ -140,6 +140,9 @@ def test_health_exposes_cached_target_readiness(monkeypatch):
     readiness = response.json()["target_readiness"]
     assert readiness["resolved_device_id"] == "speaker-1"
     assert readiness["safe_for_live_control"] is True
+    assert readiness["ready_for_live_control"] is False
+    assert readiness["active"] is False
+    assert readiness["volume_control_supported"] is False
     assert readiness["risks"] == ["inactive_device", "volume_unavailable"]
 
 

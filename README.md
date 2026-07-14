@@ -603,7 +603,12 @@ The retained `status` payload includes `status` (`ready` or a product setup/degr
 `message` fields that small clients can show directly. It also includes a dynamic `runtime` block
 with `configured`, `reachable`, `authenticated`, `target_ready`, `command_pending`, and `degraded`
 flags, plus cached `target_readiness` when the bridge has a recent devices list. That lets clients
-distinguish unresolved, restricted, inactive, and no-volume targets without making another request.
+distinguish unresolved, restricted, inactive, zero-volume, and no-volume targets without making
+another request. `target_readiness.safe_for_live_control` stays permissive enough for device transfer
+attempts, while `target_readiness.ready_for_live_control` is the stricter preflight gate for physical
+playback/volume tests: the target must be resolved, unrestricted, active, volume-controllable, and
+not sitting at zero volume. The same block includes `active`, `volume_control_supported`,
+`muted_or_zero_volume`, and `last_update_at` fields for setup and QA surfaces.
 Successful REST control and target-device changes also stamp a `last_command` pulse into `status`,
 forcing a retained status update even if Spotify's playback state has not settled into a new
 snapshot yet. Successful pulses include `ok:true`; failed MQTT command pulses include `ok:false` and
