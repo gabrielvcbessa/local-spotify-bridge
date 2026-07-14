@@ -658,6 +658,24 @@ def debug_dashboard_html() -> str:
       return "-";
     }
 
+    function commandResultBits(result) {
+      const bits = [];
+      if (!result) return bits;
+      if (result.ignored === true) bits.push("ignored");
+      if (result.reason) bits.push("reason " + result.reason);
+      if (result.playback_affecting != null) bits.push("playback " + yesNo(result.playback_affecting));
+      if (result.state_refresh_ok != null) bits.push("state refresh " + yesNo(result.state_refresh_ok));
+      if (result.state_publish_forced === true) bits.push("state forced");
+      if (result.device_refresh_ok != null) bits.push("device refresh " + yesNo(result.device_refresh_ok));
+      if (result.published_devices === true) bits.push("devices published");
+      if (result.idempotent_replay) bits.push("replay");
+      if (result.error) bits.push(result.error);
+      if (result.state_version != null) bits.push("state " + result.state_version);
+      if (result.published_topic) bits.push(result.published_topic);
+      if (result.published_version != null) bits.push("v" + result.published_version);
+      return bits;
+    }
+
     function renderRows(target, data, kind) {
       target.replaceChildren();
       const entries = Object.entries(data.by_type || {});
@@ -749,10 +767,10 @@ def debug_dashboard_html() -> str:
       document.getElementById("lastCommand").textContent = lastCommand.type || "-";
       const resultText = lastResult.ok === true ? "ok" : (lastResult.ok === false ? "failed" : "pending");
       const latency = lastResult.latency_ms == null ? "" : ", " + Math.round(lastResult.latency_ms) + "ms";
-      const replay = lastResult.idempotent_replay ? ", replay" : "";
-      const error = lastResult.error ? ", " + lastResult.error : "";
+      const lastResultBits = commandResultBits(lastResult);
+      const lastResultMeta = lastResultBits.length ? ", " + lastResultBits.join(", ") : "";
       document.getElementById("lastCommandDetail").textContent =
-        (lastCommand.request_id || "no request id") + " - " + resultText + latency + replay + error;
+        (lastCommand.request_id || "no request id") + " - " + resultText + latency + lastResultMeta;
       const historyRows = document.getElementById("mqttHistoryRows");
       historyRows.replaceChildren();
       const recentRpc = commandStatus.recent || [];
@@ -766,12 +784,7 @@ def debug_dashboard_html() -> str:
         for (const item of recentRpc) {
           const tr = document.createElement("tr");
           const status = item.ok === true ? "ok" : (item.ok === false ? "failed" : "pending");
-          const resultBits = [];
-          if (item.idempotent_replay) resultBits.push("replay");
-          if (item.error) resultBits.push(item.error);
-          if (item.state_version != null) resultBits.push("state " + item.state_version);
-          if (item.published_topic) resultBits.push(item.published_topic);
-          if (item.published_version != null) resultBits.push("v" + item.published_version);
+          const resultBits = commandResultBits(item);
           tr.appendChild(cell(item.label || "-"));
           tr.appendChild(cell(item.type || "-"));
           tr.appendChild(codeCell(item.request_id || "-"));

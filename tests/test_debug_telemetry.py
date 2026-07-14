@@ -187,6 +187,9 @@ def test_health_exposes_recent_mqtt_command_status(monkeypatch):
                 "published_state": True,
                 "state_refresh_ok": True,
                 "state_publish_forced": True,
+                "device_refresh_ok": True,
+                "published_devices": True,
+                "playback_affecting": True,
             }
         )
 
@@ -212,7 +215,9 @@ def test_health_exposes_recent_mqtt_command_status(monkeypatch):
         "published_state": True,
         "state_refresh_ok": True,
         "state_publish_forced": True,
-        "playback_affecting": None,
+        "device_refresh_ok": True,
+        "published_devices": True,
+        "playback_affecting": True,
         "ignored": None,
         "reason": None,
         "idempotent_replay": None,
@@ -287,6 +292,11 @@ def test_debug_dashboard_serves_html():
     assert "consumerReasonDetail" in response.text
     assert "mqttHistoryRows" in response.text
     assert "lastCommandDetail" in response.text
+    assert "commandResultBits" in response.text
+    assert "state refresh " in response.text
+    assert "device refresh " in response.text
+    assert "devices published" in response.text
+    assert "playback " in response.text
     assert "payload-toggle" in response.text
     assert "payload-row" in response.text
     assert "table-layout: fixed" in response.text
