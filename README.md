@@ -102,6 +102,27 @@ PORT=8091 docker compose up --build
 SPOTIFY_REDIRECT_URI=http://localhost:8091/v1/auth/callback
 ```
 
+## Deployment Stamp
+
+Stamp container deployments with the git commit so `/health` and `/v1/knob/config` prove which
+bridge build is serving the knob:
+
+```bash
+BRIDGE_BUILD_COMMIT=$(git rev-parse HEAD) \
+BRIDGE_BUILD_REF=$(git rev-parse --abbrev-ref HEAD) \
+BRIDGE_BUILD_SOURCE=environment \
+docker compose up -d --build
+```
+
+Verify a live bridge after deployment:
+
+```bash
+python scripts/verify_live_deployment.py --base-url http://192.168.68.28:8090
+```
+
+The verifier fails when build metadata is missing or `unknown`, when the live commit does not match
+the current checkout, or when the knob readiness contract is stale.
+
 ## Run Locally
 
 ```bash
