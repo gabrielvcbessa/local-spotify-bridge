@@ -13,3 +13,10 @@ def test_store_persists_refresh_token_and_target(tmp_path):
     assert reloaded.spotify_refresh_token == "refresh-token"
     assert reloaded.target_device is not None
     assert reloaded.target_device.device_name == "Living Room Speaker"
+
+    store.clear_refresh_token()
+
+    cleared = RuntimeStore(Settings(DATA_PATH=str(tmp_path / "state.json"))).load()
+    assert cleared.spotify_refresh_token is None
+    assert cleared.target_device is not None
+    assert cleared.target_device.device_name == "Living Room Speaker"

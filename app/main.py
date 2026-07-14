@@ -940,6 +940,26 @@ async def auth_callback(
     }
 
 
+@app.delete("/v1/auth/token")
+async def auth_disconnect(
+    client: Annotated[SpotifyClient, Depends(spotify_client)] = spotify,
+) -> dict[str, Any]:
+    env_refresh_token_configured = client.disconnect_runtime_credentials()
+    broker.current_state = None
+    await publish_mqtt_status(command_type="disconnect_spotify", command_ok=not env_refresh_token_configured)
+    message = (
+        "Persisted Spotify token cleared, but SPOTIFY_REFRESH_TOKEN is still configured in the environment."
+        if env_refresh_token_configured
+        else "Spotify disconnected. Pair again from /v1/auth/login."
+    )
+    return {
+        "message": message,
+        "persisted_refresh_token_cleared": True,
+        "env_refresh_token_configured": env_refresh_token_configured,
+        "spotify_configured": client.spotify_configured,
+    }
+
+
 @app.get("/v1/state")
 async def get_state(
     request: Request,

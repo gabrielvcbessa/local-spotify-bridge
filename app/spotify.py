@@ -95,6 +95,13 @@ class SpotifyClient:
     def spotify_configured(self) -> bool:
         return bool(self._settings.spotify_auth_configured and self.refresh_token)
 
+    def disconnect_runtime_credentials(self) -> bool:
+        if self._store is not None:
+            self._store.clear_refresh_token()
+        self._access_token = None
+        self._token_expires_at = 0.0
+        return bool(self._settings.spotify_refresh_token)
+
     def next_poll_interval(self, base_interval_seconds: float, group: str = "playback") -> float:
         return self._rate_limiter_for(group).poll_interval(base_interval_seconds)
 

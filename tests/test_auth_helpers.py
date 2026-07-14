@@ -1,9 +1,10 @@
 import httpx
 import pytest
 
+from app import main
 from app.config import Settings
 from app.spotify import SpotifyClient
-from app.store import TargetDevice
+from app.store import RuntimeStore, TargetDevice
 
 
 def test_authorize_url_contains_redirect_and_scopes():
@@ -56,6 +57,72 @@ async def test_exchange_code_returns_refresh_token():
         token = await client.exchange_code("abc123")
 
     assert token["refresh_token"] == "refresh"
+
+
+def test_disconnect_runtime_credentials_clears_store_and_access_token(tmp_path):
+    store = RuntimeStore(Settings(DATA_PATH=str(tmp_path / "state.json")))
+    store.set_refresh_token("stored-refresh")
+    client = SpotifyClient(
+        Settings(
+            SPOTIFY_CLIENT_ID="client-id",
+            SPOTIFY_CLIENT_SECRET="client-secret",
+            DATA_PATH=str(tmp_path / "state.json"),
+        ),
+        store=store,
+    )
+    client._access_token = "access"
+    client._token_expires_at = 9999999999.0
+
+    env_configured = client.disconnect_runtime_credentials()
+
+    assert env_configured is False
+    assert store.get_refresh_token() is None
+    assert client._access_token is None
+    assert client._token_expires_at == 0.0
+    assert client.spotify_configured is False
+
+
+def test_disconnect_runtime_credentials_reports_env_refresh_token(tmp_path):
+    store = RuntimeStore(Settings(DATA_PATH=str(tmp_path / "state.json")))
+    store.set_refresh_token("stored-refresh")
+    client = SpotifyClient(
+        Settings(
+            SPOTIFY_CLIENT_ID="client-id",
+            SPOTIFY_CLIENT_SECRET="client-secret",
+            SPOTIFY_REFRESH_TOKEN="env-refresh",
+            DATA_PATH=str(tmp_path / "state.json"),
+        ),
+        store=store,
+    )
+
+    env_configured = client.disconnect_runtime_credentials()
+
+    assert env_configured is True
+    assert store.get_refresh_token() is None
+    assert client.spotify_configured is True
+
+
+@pytest.mark.anyio
+async def test_auth_disconnect_publishes_status(monkeypatch):
+    status_pulses = []
+
+    class FakeSpotify:
+        spotify_configured = False
+
+        def disconnect_runtime_credentials(self):
+            return False
+
+    async def fake_publish_mqtt_status(command_type=None, command_request_id=None, command_pending=None, command_ok=None, command_error=None):
+        status_pulses.append((command_type, command_request_id, command_pending, command_ok, command_error))
+
+    monkeypatch.setattr(main, "publish_mqtt_status", fake_publish_mqtt_status)
+
+    response = await main.auth_disconnect(client=FakeSpotify())
+
+    assert response["persisted_refresh_token_cleared"] is True
+    assert response["env_refresh_token_configured"] is False
+    assert response["spotify_configured"] is False
+    assert status_pulses == [("disconnect_spotify", None, None, True, None)]
 
 
 @pytest.mark.anyio

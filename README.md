@@ -75,6 +75,17 @@ http://localhost:8090/v1/auth/login
 6. Spotify redirects back to `/v1/auth/callback`; the bridge saves the returned `refresh_token`.
 7. `/health` should show `spotify_configured: true` without a restart.
 
+To disconnect a token paired through the runtime store without editing `.env`:
+
+```bash
+curl -X DELETE http://localhost:8090/v1/auth/token
+```
+
+This clears the persisted refresh token and cached access token immediately. If
+`SPOTIFY_REFRESH_TOKEN` is still set in the environment, the response reports
+`env_refresh_token_configured: true` because that token will continue to configure the bridge until
+the environment is changed.
+
 If port `8090` is busy, run with another host port and update the Spotify redirect URI to match:
 
 ```bash

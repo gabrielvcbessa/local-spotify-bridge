@@ -45,6 +45,12 @@ class RuntimeStore:
         self.save(state)
         return state
 
+    def clear_refresh_token(self) -> RuntimeState:
+        state = self.load()
+        state.spotify_refresh_token = None
+        self.save(state)
+        return state
+
     def get_target_device(self) -> TargetDevice | None:
         return self.load().target_device
 
