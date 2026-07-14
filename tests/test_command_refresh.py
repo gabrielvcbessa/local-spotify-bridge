@@ -281,6 +281,37 @@ async def test_library_root_uses_cached_devices_without_fetching_devices():
 
 
 @pytest.mark.asyncio
+async def test_mqtt_devices_request_publishes_advertised_devices_library_page(monkeypatch):
+    client = FakeDevicesClient()
+    published = []
+    previous_cached = main.cached_devices
+
+    async def fake_publish_mqtt_retained(topic, payload):
+        published.append((topic, payload))
+
+    monkeypatch.setattr(main, "spotify", client)
+    monkeypatch.setattr(main.broker, "publish_mqtt_retained", fake_publish_mqtt_retained)
+    main.cached_devices = None
+    try:
+        result = await main.handle_mqtt_request({"request_id": "devices-1", "type": "devices", "offset": 6, "limit": 6})
+    finally:
+        main.cached_devices = previous_cached
+
+    assert result["published_topic"] == main.broker.mqtt_topic("devices")
+    assert [topic for topic, _payload in published] == ["devices", "library/page"]
+    devices_payload = published[0][1]
+    page_payload = published[1][1]
+    assert devices_payload["request_id"] == "devices-1"
+    assert devices_payload["offset"] == 6
+    assert devices_payload["limit"] == 6
+    assert page_payload["request_id"] == "devices-1"
+    assert page_payload["kind"] == "devices"
+    assert page_payload["page"] == 3
+    assert page_payload["offset"] == 6
+    assert page_payload["limit"] == 6
+
+
+@pytest.mark.asyncio
 async def test_recent_tracks_library_page_uses_recent_window():
     client = FakeDevicesClient()
 

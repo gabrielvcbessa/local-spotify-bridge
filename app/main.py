@@ -2433,7 +2433,7 @@ async def handle_mqtt_request(command: dict[str, Any]) -> dict[str, Any]:
     if request_type == "devices":
         payload = await build_devices_payload(spotify, request_id=request_id, offset=offset, limit=limit, refresh=True)
         await broker.publish_mqtt_retained("devices", payload)
-        page_payload = await build_devices_page_payload(spotify, request_id=request_id, page=2, offset=offset, limit=limit)
+        page_payload = await build_devices_page_payload(spotify, request_id=request_id, page=3, offset=offset, limit=limit)
         await broker.publish_mqtt_retained("library/page", page_payload)
         return {"published_topic": broker.mqtt_topic("devices"), "published_version": payload["version"]}
 
