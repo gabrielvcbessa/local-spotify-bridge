@@ -72,11 +72,22 @@ docker compose up --build
 http://localhost:8090/v1/auth/login
 ```
 
-5. Copy `authorize_url` from the JSON response, open it in your browser, and approve Spotify access.
+5. Browser requests redirect to Spotify automatically. API callers still receive JSON with
+   `authorize_url`, `redirect_uri`, and `scopes`.
 6. Spotify redirects back to `/v1/auth/callback`; the bridge saves the returned runtime credential
    and the callback response reports only token-free metadata.
 7. `/health` should show `spotify_configured: true` and
    `spotify_refresh_token_source: runtime` without a restart.
+
+If the bridge runs on another machine, keep the loopback redirect URI and forward the port before
+opening the login URL:
+
+```bash
+ssh -L 8090:127.0.0.1:8090 <user>@192.168.68.28
+```
+
+Then open `http://127.0.0.1:8090/v1/auth/login` in your local browser. Spotify redirects to local
+port `8090`, and SSH forwards the callback to the bridge.
 
 To disconnect a token paired through the runtime store without editing `.env`:
 

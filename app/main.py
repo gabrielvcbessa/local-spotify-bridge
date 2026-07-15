@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from PIL import Image
 
 from .art import ArtCache, ArtOptions, art_version, bytes_hash, color_bar_test_pattern_rgb565, display_ready_rgb565, image_to_rgb565
@@ -236,6 +236,11 @@ def direct_spotify_status(client: SpotifyClient | None = None) -> dict[str, Any]
         "setup_path": "/v1/auth/login",
         "disconnect_path": "/v1/auth/token",
     }
+
+
+def wants_browser_redirect(request: Request) -> bool:
+    accept = request.headers.get("accept", "")
+    return "text/html" in accept and "application/json" not in accept
 
 
 def bridge_build_info() -> dict[str, Any]:
@@ -1199,14 +1204,18 @@ def debug_dashboard_html() -> str:
 </html>"""
 
 
-@app.get("/v1/auth/login")
+@app.get("/v1/auth/login", response_model=None)
 async def auth_login(
+    request: Request,
     state: str | None = None,
     client: Annotated[SpotifyClient, Depends(spotify_client)] = spotify,
-) -> dict[str, Any]:
+) -> Any:
     try:
+        authorize_url = client.authorize_url(state)
+        if wants_browser_redirect(request):
+            return RedirectResponse(authorize_url, status_code=302)
         return {
-            "authorize_url": client.authorize_url(state),
+            "authorize_url": authorize_url,
             "redirect_uri": settings.spotify_redirect_uri,
             "scopes": settings.spotify_scope_list,
         }

@@ -1,5 +1,6 @@
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 
 from app import main
 from app.config import Settings
@@ -37,6 +38,47 @@ def test_required_feature_scopes_are_appended_to_stale_env_scope_list():
     assert settings.spotify_scope_list[-1] == "user-library-modify"
     assert settings.spotify_scope_list.count("user-library-read") == 1
     assert settings.spotify_scope_list.count("user-library-modify") == 1
+
+
+def test_auth_login_returns_json_for_api_callers():
+    class FakeSpotify:
+        def authorize_url(self, state=None):
+            assert state == "state-1"
+            return "https://accounts.spotify.com/authorize?state=state-1"
+
+    main.app.dependency_overrides[main.spotify_client] = lambda: FakeSpotify()
+    try:
+        response = TestClient(main.app).get(
+            "/v1/auth/login?state=state-1",
+            headers={"accept": "application/json"},
+        )
+    finally:
+        main.app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["authorize_url"] == "https://accounts.spotify.com/authorize?state=state-1"
+    assert payload["redirect_uri"] == main.settings.spotify_redirect_uri
+
+
+def test_auth_login_redirects_browser_callers_to_spotify():
+    class FakeSpotify:
+        def authorize_url(self, state=None):
+            assert state == "state-1"
+            return "https://accounts.spotify.com/authorize?state=state-1"
+
+    main.app.dependency_overrides[main.spotify_client] = lambda: FakeSpotify()
+    try:
+        response = TestClient(main.app).get(
+            "/v1/auth/login?state=state-1",
+            headers={"accept": "text/html,application/xhtml+xml"},
+            follow_redirects=False,
+        )
+    finally:
+        main.app.dependency_overrides.clear()
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "https://accounts.spotify.com/authorize?state=state-1"
 
 
 @pytest.mark.anyio
