@@ -643,8 +643,10 @@ token-storage hardening are solved. It also exposes `control_plane=bridge`,
 `on_device_direct_transport=not_available`, and
 `direct_spotify_migration_next=firmware_token_refresh_and_playback_commands` so constrained clients
 can show the current ownership boundary without guessing. The same architecture block advertises
-`profile_model=single_bridge_profile` and `multi_profile_selection=false`; multi-profile backend
-switching remains blocked until a profile registry exists. Config also includes a `protocol` block:
+`profile_model=profile_registry`, `multi_profile_selection=true`, and a token-free
+`profile_registry` with the active profile id plus selectable profile metadata. The selection
+transport is `bridge_profile_registry`, so constrained clients can render backend/profile choices
+from retained config without storing Spotify secrets. Config also includes a `protocol` block:
 
 The retained `status` message and `/health` also expose a dynamic `direct_spotify` block. It is
 intentionally token-free: clients can read `paired`, `pairing_supported`, `token_source`,

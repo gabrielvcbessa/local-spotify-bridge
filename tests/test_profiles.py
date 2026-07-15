@@ -1,5 +1,20 @@
+from pathlib import Path
+
 from app.config import Settings
 from app.profiles import bridge_profile_registry
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_readme_documents_profile_registry_contract():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "profile_model=profile_registry" in readme
+    assert "multi_profile_selection=true" in readme
+    assert "bridge_profile_registry" in readme
+    assert "profile_model=single_bridge_profile" not in readme
+    assert "multi_profile_selection=false" not in readme
 
 
 def test_bridge_profile_registry_defaults_to_local_profile():
