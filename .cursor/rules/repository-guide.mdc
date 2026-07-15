@@ -1,0 +1,24 @@
+---
+description: Local Spotify Bridge architecture, MQTT contract, and workflow
+alwaysApply: true
+---
+
+# Repository Guide
+
+Read and follow the root [AGENTS.md](../../AGENTS.md) before editing. It is the
+canonical guide shared by Cursor, Codex, and Claude Code.
+
+`app/mqtt_contract.py` owns the advertised schema. `app/broker.py` owns MQTT
+transport, retained publications, RPC replay, and listener activity.
+`app/main.py` owns API orchestration, commands, and follow-up refreshes.
+
+Before finishing a Python change, run the focused tests plus:
+
+```sh
+.venv/bin/python -m pytest -q
+.venv/bin/ruff check .
+```
+
+Keep credentials and tokens out of code, tests, logs, and commits. Do not send
+live Spotify commands, alter OAuth state, deploy containers, or clear persisted
+state unless the task explicitly requires that external action.

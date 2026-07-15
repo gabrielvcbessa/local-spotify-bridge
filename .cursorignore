@@ -1,13 +1,11 @@
-.env
+.git/
 .venv/
 data/
-__pycache__/
+**/__pycache__/
 .pytest_cache/
 .ruff_cache/
-.mypy_cache/
-*.pyc
-dist/
-build/
 *.egg-info/
+.env
 current.jpg
 current.rgb565
+*.pyc

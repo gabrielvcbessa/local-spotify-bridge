@@ -6,6 +6,11 @@ updates only when something meaningful changes, and exposes simple local REST an
 It can also publish the latest state to MQTT for Home Assistant, knobs, displays, and other local
 listeners.
 
+AI coding agents should start with `AGENTS.md`. Cursor, Codex, and Claude Code
+adapters are included at `.cursor/rules/repository-guide.mdc`, `AGENTS.md`, and
+`CLAUDE.md`; they map the service architecture, MQTT contract ownership, test
+gates, security boundaries, and live deployment verification.
+
 ## What It Provides
 
 - `GET /v1/state` for passive or active clients that want the cached state.
