@@ -73,6 +73,7 @@ async def test_forced_publish_republishes_unchanged_mqtt_snapshot():
     broker._mqtt_client = mqtt
     state = PlaybackSnapshot(title="Song")
     broker.current_state = state
+    broker._state_initialized = True
 
     async def snapshot_factory(version, snapshot_state, force):
         return {
@@ -99,6 +100,38 @@ async def test_forced_publish_republishes_unchanged_mqtt_snapshot():
     assert json.loads(mqtt.published[2][1])["event"] == "playback.refreshed"
     assert mqtt.published[3][0] == "rotary/kitchen/state"
     assert json.loads(mqtt.published[3][1]) == {"version": 2, "force": True, "state_title": "Song"}
+
+
+@pytest.mark.anyio
+async def test_first_no_playback_observation_replaces_stale_retained_state():
+    broker = ConnectionBroker(
+        Settings(
+            MQTT_ENABLED=True,
+            MQTT_TOPIC_PREFIX="local-spotify-bridge",
+            MQTT_KNOB_TOPIC_PREFIX="rotary",
+            MQTT_KNOB_DEVICE_ID="kitchen",
+        )
+    )
+    mqtt = FakeMqttClient()
+    broker._mqtt_client = mqtt
+
+    async def snapshot_factory(version, snapshot_state, force):
+        return {
+            "version": version,
+            "force": force,
+            "state_title": snapshot_state.title if snapshot_state else None,
+        }
+
+    broker.set_mqtt_snapshot_factory(snapshot_factory)
+
+    first = await broker.publish_if_changed(None)
+    duplicate = await broker.publish_if_changed(None)
+
+    assert first is True
+    assert duplicate is False
+    assert broker.version == 1
+    assert json.loads(mqtt.published[0][1])["event"] == "playback.refreshed"
+    assert json.loads(mqtt.published[1][1]) == {"version": 1, "force": False, "state_title": None}
 
 
 @pytest.mark.anyio

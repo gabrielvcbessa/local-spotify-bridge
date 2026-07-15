@@ -93,6 +93,7 @@ class ConnectionBroker:
         self._latest_volume_generation = 0
         self._version = 0
         self.current_state: PlaybackSnapshot | None = None
+        self._state_initialized = False
         self.last_poll_at: str | None = None
         self.last_spotify_error: str | None = None
         self.last_mqtt_availability: dict[str, Any] | None = None
@@ -373,6 +374,7 @@ class ConnectionBroker:
 
     async def publish_if_changed(self, new_state: PlaybackSnapshot | None, *, force: bool = False) -> bool:
         self.mark_spotify_success()
+        first_observation = not self._state_initialized
         track_changed = playback_track_changed(self.current_state, new_state)
         new_state = enrich_with_previous_track(
             self.current_state,
@@ -384,9 +386,10 @@ class ConnectionBroker:
             new_state,
             progress_drift_ms=self._settings.state_change_progress_drift_ms,
         )
-        if not changed and not force:
+        if not changed and not force and not first_observation:
             return False
 
+        self._state_initialized = True
         if track_changed:
             self.clear_forward_transition_expected()
         self.current_state = new_state
