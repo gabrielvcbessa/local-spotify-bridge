@@ -88,6 +88,9 @@ class ConnectionBroker:
         self._mqtt_config_factory: Callable[[], dict[str, Any]] | None = None
         self._mqtt_command_handler: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None = None
         self._mqtt_request_handler: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None = None
+        self._mqtt_command_lock = asyncio.Lock()
+        self._mqtt_command_generation = 0
+        self._latest_volume_generation = 0
         self._version = 0
         self.current_state: PlaybackSnapshot | None = None
         self.last_poll_at: str | None = None
@@ -218,6 +221,14 @@ class ConnectionBroker:
             "device_refresh_ok": response.get("device_refresh_ok"),
             "published_devices": response.get("published_devices"),
             "playback_affecting": response.get("playback_affecting"),
+            "phase": response.get("phase"),
+            "state_confirmed": response.get("state_confirmed"),
+            "confirmation_reason": response.get("confirmation_reason"),
+            "convergence_ms": response.get("convergence_ms"),
+            "observed_playing": response.get("observed_playing"),
+            "observed_track_id": response.get("observed_track_id"),
+            "observed_track_uri": response.get("observed_track_uri"),
+            "observed_device_id": response.get("observed_device_id"),
             "ignored": response.get("ignored"),
             "reason": response.get("reason"),
             "idempotent_replay": response.get("idempotent_replay"),
@@ -244,6 +255,14 @@ class ConnectionBroker:
                 "device_refresh_ok": response.get("device_refresh_ok"),
                 "published_devices": response.get("published_devices"),
                 "playback_affecting": response.get("playback_affecting"),
+                "phase": response.get("phase"),
+                "state_confirmed": response.get("state_confirmed"),
+                "confirmation_reason": response.get("confirmation_reason"),
+                "convergence_ms": response.get("convergence_ms"),
+                "observed_playing": response.get("observed_playing"),
+                "observed_track_id": response.get("observed_track_id"),
+                "observed_track_uri": response.get("observed_track_uri"),
+                "observed_device_id": response.get("observed_device_id"),
                 "ignored": response.get("ignored"),
                 "reason": response.get("reason"),
                 "published_topic": response.get("published_topic"),
@@ -515,7 +534,17 @@ class ConnectionBroker:
             return
 
         self.mark_mqtt_activity(source="command", payload=mqtt_activity_payload_summary(payload))
-        await self._handle_mqtt_rpc(payload, self._mqtt_command_handler, self.mqtt_topic("command_result"), "command")
+        self._mqtt_command_generation += 1
+        generation = self._mqtt_command_generation
+        is_volume_command = mqtt_payload_type(payload) == "volume_set"
+        if is_volume_command:
+            self._latest_volume_generation = generation
+
+        async with self._mqtt_command_lock:
+            handler = self._mqtt_command_handler
+            if is_volume_command and generation != self._latest_volume_generation:
+                handler = superseded_volume_handler
+            await self._handle_mqtt_rpc(payload, handler, self.mqtt_topic("command_result"), "command")
 
     async def _handle_mqtt_rpc(
         self,
@@ -739,6 +768,29 @@ def mqtt_payload_fingerprint(payload: dict[str, Any]) -> str:
     normalized = strip_mqtt_volatile_fields(payload)
     encoded = json.dumps(normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
     return hashlib.sha256(encoded).hexdigest()
+
+
+def mqtt_payload_type(payload: str) -> str | None:
+    try:
+        message = json.loads(payload)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(message, dict):
+        return None
+    message_type = message.get("type")
+    return message_type if isinstance(message_type, str) else None
+
+
+async def superseded_volume_handler(_: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "ignored": True,
+        "reason": "superseded_by_newer_volume",
+        "phase": "confirmed",
+        "state_confirmed": True,
+        "state_refresh_ok": None,
+        "state_publish_forced": False,
+        "playback_affecting": False,
+    }
 
 
 def mqtt_error_envelope(exc: Exception, *, label: str) -> dict[str, Any]:

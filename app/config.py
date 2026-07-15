@@ -68,21 +68,21 @@ class Settings(BaseSettings):
         alias="SPOTIFY_TRACK_END_REFRESH_PADDING_SECONDS",
     )
     command_followup_refresh_delays_seconds: str = Field(
-        default="0.5,1.5",
+        default="0.25,0.8",
         alias="COMMAND_FOLLOWUP_REFRESH_DELAYS_SECONDS",
     )
     command_followup_refresh_profiles_seconds: str = Field(
         default=(
-            "play=0.25,0.9;"
-            "pause=0.25,0.9;"
-            "play_pause=0.25,0.9;"
-            "next=0.5,1.5,3.0;"
-            "previous=0.5,1.5,3.0;"
-            "select_source=0.7,1.8,3.5;"
-            "play_library_item=0.7,1.8,3.5;"
-            "save_current_track=0.4,1.2;"
-            "unsave_current_track=0.4,1.2;"
-            "transfer=0.7,1.8,3.5"
+            "play=0.2,0.6;"
+            "pause=0.2,0.6;"
+            "play_pause=0.2,0.6;"
+            "next=0.2,0.7,1.5;"
+            "previous=0.2,0.7,1.5;"
+            "select_source=0.3,0.9,1.8;"
+            "play_library_item=0.3,0.9,1.8;"
+            "save_current_track=0.2,0.6;"
+            "unsave_current_track=0.2,0.6;"
+            "transfer=0.3,0.9,1.8"
         ),
         alias="COMMAND_FOLLOWUP_REFRESH_PROFILES_SECONDS",
     )

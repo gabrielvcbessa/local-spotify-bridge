@@ -85,6 +85,8 @@ def test_mqtt_knob_config_payload_advertises_protocol_and_topics():
     assert "command_device_refresh_result" in payload["protocol"]["features"]
     assert "command_result_metadata" in payload["protocol"]["features"]
     assert "command_playback_expectation" in payload["protocol"]["features"]
+    assert "command_phase" in payload["protocol"]["features"]
+    assert "command_state_convergence" in payload["protocol"]["features"]
     assert "status_command_metadata" in payload["protocol"]["features"]
     assert "target_ready" in payload["capabilities"]["runtime_states"]
     assert "save_current_track" in MQTT_KNOB_COMMANDS

@@ -7,6 +7,37 @@ from app.models import PlaybackCommand, PlaybackSnapshot, SeekCommand, TargetDev
 QUEUE_STATUS_SOURCE = "retained_state_adjacent_tracks"
 
 
+@pytest.fixture(autouse=True)
+def preserve_transport_focused_command_tests(monkeypatch):
+    async def fake_refresh_until_command_converged(
+        client,
+        *,
+        command_type,
+        command,
+        before,
+        expected_playing,
+        follow_up_delays,
+    ):
+        _ = (command_type, command, before, expected_playing)
+        published = await main.refresh_after_successful_command(client, follow_up_delays=follow_up_delays)
+        state_confirmed = published is not False
+        return {
+            "state_version": main.broker.version,
+            "published_state": state_confirmed,
+            "state_refresh_ok": state_confirmed,
+            "state_publish_forced": True,
+            "state_confirmed": state_confirmed,
+            "confirmation_reason": "transport_test_refresh" if state_confirmed else "state_refresh_failed",
+            "convergence_ms": 0.0,
+            "observed_playing": None,
+            "observed_track_id": None,
+            "observed_track_uri": None,
+            "observed_device_id": None,
+        }
+
+    monkeypatch.setattr(main, "refresh_until_command_converged", fake_refresh_until_command_converged)
+
+
 class FakeSpotifyClient:
     def __init__(self) -> None:
         self.calls = 0
@@ -182,6 +213,7 @@ async def test_refresh_after_successful_command_forces_state_publish(monkeypatch
 async def test_mqtt_knob_snapshot_publishes_control_state(monkeypatch):
     published = []
     status_forces = []
+    scheduled_art = []
 
     async def fake_publish_mqtt_retained(topic, payload, *, force=False):
         published.append((topic, payload, force))
@@ -208,11 +240,15 @@ async def test_mqtt_knob_snapshot_publishes_control_state(monkeypatch):
     async def fake_resolved_context_name(*_args, **_kwargs):
         return "Resolved Playlist"
 
+    def fake_schedule_mqtt_art_publish(_client, state, options):
+        scheduled_art.append((state.item_id if state else None, options.size))
+
     monkeypatch.setattr(main.broker, "publish_mqtt_retained", fake_publish_mqtt_retained)
     monkeypatch.setattr(main, "publish_mqtt_art_payloads", fake_publish_mqtt_art_payloads)
     monkeypatch.setattr(main, "publish_mqtt_status", fake_publish_mqtt_status)
     monkeypatch.setattr(main, "prewarm_cached_track_art", fake_prewarm_cached_track_art)
     monkeypatch.setattr(main, "resolved_context_name", fake_resolved_context_name)
+    monkeypatch.setattr(main, "schedule_mqtt_art_publish", fake_schedule_mqtt_art_publish)
 
     state = PlaybackSnapshot(
         is_playing=True,
@@ -241,6 +277,7 @@ async def test_mqtt_knob_snapshot_publishes_control_state(monkeypatch):
     assert payload["context"]["display_name"] == "Resolved Playlist"
     assert payload["device"]["id"] == "device-1"
     assert payload["device"]["volume_percent"] == 42
+    assert scheduled_art == [("track-1", main.settings.mqtt_knob_art_size)]
 
 
 @pytest.mark.asyncio
@@ -395,13 +432,13 @@ async def test_mqtt_next_previous_do_not_use_implicit_target_device(monkeypatch)
     ]
     assert status_pulses == [
         ("next", "knob-next-1", True, None),
-        ("next", "knob-next-1", False, True),
+        ("next", "knob-next-1", True, None),
         ("next", "knob-next-1", False, True),
         ("previous", "knob-prev-1", True, None),
-        ("previous", "knob-prev-1", False, True),
+        ("previous", "knob-prev-1", True, None),
         ("previous", "knob-prev-1", False, True),
         ("next", None, True, None),
-        ("next", None, False, True),
+        ("next", None, True, None),
         ("next", None, False, True),
     ]
 
@@ -450,12 +487,12 @@ async def test_mqtt_transfer_refreshes_devices_and_state(monkeypatch):
     assert final_metadata[-1]["published_devices"] is True
     assert status_pulses == [
         ("transfer", "knob-transfer-1", True, None),
-        ("transfer", "knob-transfer-1", False, True),
+        ("transfer", "knob-transfer-1", True, None),
         ("transfer", "knob-transfer-1", False, True),
     ]
     assert events == [
         ("status", "transfer", "knob-transfer-1", True, None),
-        ("status", "transfer", "knob-transfer-1", False, True),
+        ("status", "transfer", "knob-transfer-1", True, None),
         ("devices", client),
         ("refresh", main.settings.command_followup_refresh_delays_for("transfer"), True),
         ("status", "transfer", "knob-transfer-1", False, True),
@@ -504,13 +541,13 @@ async def test_mqtt_transfer_success_survives_device_refresh_failure(monkeypatch
     assert client.calls == [("transfer", "speaker-1")]
     assert status_pulses == [
         ("transfer", "knob-transfer-device-refresh-fail", True, None),
-        ("transfer", "knob-transfer-device-refresh-fail", False, True),
+        ("transfer", "knob-transfer-device-refresh-fail", True, None),
         ("transfer", "knob-transfer-device-refresh-fail", False, True),
     ]
 
 
 @pytest.mark.asyncio
-async def test_mqtt_command_success_status_publishes_before_state_refresh(monkeypatch):
+async def test_mqtt_command_status_stays_pending_until_state_refresh_confirms(monkeypatch):
     client = FakeCommandSpotifyClient()
     events = []
 
@@ -527,28 +564,20 @@ async def test_mqtt_command_success_status_publishes_before_state_refresh(monkey
 
     await main.handle_mqtt_command({"request_id": "knob-next-ack", "type": "next"})
 
-    assert events == [
-        ("status", "next", "knob-next-ack", True, None, None),
-        ("status", "next", "knob-next-ack", False, True, {"playback_affecting": True, "expected_playing": True}),
-        ("refresh", main.settings.command_followup_refresh_delays_for("next"), True),
-        (
-            "status",
-            "next",
-            "knob-next-ack",
-            False,
-            True,
-                {
-                    "state_version": main.broker.version,
-                    "published_state": True,
-                    "state_refresh_ok": True,
-                    "state_publish_forced": True,
-                    "playback_affecting": True,
-                    "expected_playing": True,
-                    "queue_status_published": True,
-                    "queue_status_source": QUEUE_STATUS_SOURCE,
-                },
-            ),
-        ]
+    assert events[0] == ("status", "next", "knob-next-ack", True, None, {"phase": "pending"})
+    assert events[1] == (
+        "status",
+        "next",
+        "knob-next-ack",
+        True,
+        None,
+        {"phase": "accepted", "playback_affecting": True, "expected_playing": True},
+    )
+    assert events[2] == ("refresh", main.settings.command_followup_refresh_delays_for("next"), True)
+    assert events[3][0:5] == ("status", "next", "knob-next-ack", False, True)
+    assert events[3][5]["phase"] == "confirmed"
+    assert events[3][5]["state_confirmed"] is True
+    assert events[3][5]["queue_status_source"] == QUEUE_STATUS_SOURCE
 
 
 @pytest.mark.asyncio
@@ -600,16 +629,16 @@ async def test_mqtt_fast_controls_use_command_follow_up_profiles(monkeypatch):
     ]
     assert status_pulses == [
         ("volume_set", "knob-volume-1", True, None),
-        ("volume_set", "knob-volume-1", False, True),
+        ("volume_set", "knob-volume-1", True, None),
         ("volume_set", "knob-volume-1", False, True),
         ("seek", "knob-seek-1", True, None),
-        ("seek", "knob-seek-1", False, True),
+        ("seek", "knob-seek-1", True, None),
         ("seek", "knob-seek-1", False, True),
         ("shuffle_set", "knob-shuffle-1", True, None),
-        ("shuffle_set", "knob-shuffle-1", False, True),
+        ("shuffle_set", "knob-shuffle-1", True, None),
         ("shuffle_set", "knob-shuffle-1", False, True),
         ("repeat_set", "knob-repeat-1", True, None),
-        ("repeat_set", "knob-repeat-1", False, True),
+        ("repeat_set", "knob-repeat-1", True, None),
         ("repeat_set", "knob-repeat-1", False, True),
     ]
 
@@ -635,18 +664,14 @@ async def test_mqtt_ignored_volume_command_reports_explicit_result(monkeypatch):
         main.broker.current_state = previous_state
 
     assert client.calls == []
-    assert result == {
-        "ignored": True,
-        "reason": "volume_control_unsupported",
-        "state_version": main.broker.version,
-        "published_state": False,
-        "state_refresh_ok": None,
-        "state_publish_forced": False,
-        "playback_affecting": False,
-    }
+    assert result["ok"] is False
+    assert result["phase"] == "failed"
+    assert result["ignored"] is True
+    assert result["reason"] == "volume_control_unsupported"
+    assert result["state_confirmed"] is False
     assert status_pulses == [
-        ("volume_set", "knob-volume-ignored", True, None, None),
-        ("volume_set", "knob-volume-ignored", False, True, result),
+        ("volume_set", "knob-volume-ignored", True, None, {"phase": "pending"}),
+        ("volume_set", "knob-volume-ignored", False, False, result),
     ]
 
 
@@ -678,8 +703,8 @@ async def test_mqtt_command_success_survives_refresh_failure(monkeypatch):
     assert result["playback_affecting"] is True
     assert status_pulses == [
         ("next", "knob-next-refresh-fail", True, None),
-        ("next", "knob-next-refresh-fail", False, True),
-        ("next", "knob-next-refresh-fail", False, True),
+        ("next", "knob-next-refresh-fail", True, None),
+        ("next", "knob-next-refresh-fail", False, False),
     ]
 
 
@@ -709,24 +734,17 @@ async def test_mqtt_save_track_uses_payload_track_uri_and_publishes_status(monke
 
     assert client.calls == [("save_track", "track-1")]
     assert refreshes == [main.settings.command_followup_refresh_delays_for("save_current_track")]
-    assert status_pulses == [
-        ("save_current_track", "knob-like-1", True, None, None),
-        ("save_current_track", "knob-like-1", False, True, {"playback_affecting": False}),
-        (
-            "save_current_track",
-            "knob-like-1",
-            False,
-            True,
-            {
-                "state_version": main.broker.version,
-                "published_state": None,
-                "state_refresh_ok": None,
-                "state_publish_forced": True,
-                "playback_affecting": False,
-                "track_saved": True,
-            },
-        ),
-    ]
+    assert status_pulses[0] == ("save_current_track", "knob-like-1", True, None, {"phase": "pending"})
+    assert status_pulses[1] == (
+        "save_current_track",
+        "knob-like-1",
+        True,
+        None,
+        {"phase": "accepted", "playback_affecting": False},
+    )
+    assert status_pulses[2][0:4] == ("save_current_track", "knob-like-1", False, True)
+    assert status_pulses[2][4]["phase"] == "confirmed"
+    assert status_pulses[2][4]["track_saved"] is True
 
 
 @pytest.mark.asyncio
@@ -753,24 +771,17 @@ async def test_mqtt_unsave_track_falls_back_to_current_state(monkeypatch):
 
     assert client.calls == [("remove_saved_track", "track-2")]
     assert refreshes == [main.settings.command_followup_refresh_delays_for("unsave_current_track")]
-    assert status_pulses == [
-        ("unsave_current_track", "knob-unlike-1", True, None, None),
-        ("unsave_current_track", "knob-unlike-1", False, True, {"playback_affecting": False}),
-        (
-            "unsave_current_track",
-            "knob-unlike-1",
-            False,
-            True,
-            {
-                "state_version": main.broker.version,
-                "published_state": None,
-                "state_refresh_ok": None,
-                "state_publish_forced": True,
-                "playback_affecting": False,
-                "track_saved": False,
-            },
-        ),
-    ]
+    assert status_pulses[0] == ("unsave_current_track", "knob-unlike-1", True, None, {"phase": "pending"})
+    assert status_pulses[1] == (
+        "unsave_current_track",
+        "knob-unlike-1",
+        True,
+        None,
+        {"phase": "accepted", "playback_affecting": False},
+    )
+    assert status_pulses[2][0:4] == ("unsave_current_track", "knob-unlike-1", False, True)
+    assert status_pulses[2][4]["phase"] == "confirmed"
+    assert status_pulses[2][4]["track_saved"] is False
 
 
 @pytest.mark.asyncio
@@ -814,80 +825,16 @@ async def test_mqtt_play_pause_does_not_use_implicit_target_device(monkeypatch):
         (main.settings.command_followup_refresh_delays_for("play"), True),
         (main.settings.command_followup_refresh_delays_for("pause"), True),
     ]
-    assert status_pulses == [
-        ("play_pause", None, True, None, None),
-        ("play_pause", None, False, True, {"playback_affecting": True, "expected_playing": False}),
-        (
-            "play_pause",
-            None,
-            False,
-            True,
-            {
-                "state_version": main.broker.version,
-                "published_state": True,
-                "state_refresh_ok": True,
-                "state_publish_forced": True,
-                "playback_affecting": True,
-                "expected_playing": False,
-                "queue_status_published": True,
-                "queue_status_source": QUEUE_STATUS_SOURCE,
-            },
-        ),
-        ("play_pause", None, True, None, None),
-        ("play_pause", None, False, True, {"playback_affecting": True, "expected_playing": True}),
-        (
-            "play_pause",
-            None,
-            False,
-            True,
-            {
-                "state_version": main.broker.version,
-                "published_state": True,
-                "state_refresh_ok": True,
-                "state_publish_forced": True,
-                "playback_affecting": True,
-                "expected_playing": True,
-                "queue_status_published": True,
-                "queue_status_source": QUEUE_STATUS_SOURCE,
-            },
-        ),
-        ("play", "knob-play-1", True, None, None),
-        ("play", "knob-play-1", False, True, {"playback_affecting": True, "expected_playing": True}),
-        (
-            "play",
-            "knob-play-1",
-            False,
-            True,
-            {
-                "state_version": main.broker.version,
-                "published_state": True,
-                "state_refresh_ok": True,
-                "state_publish_forced": True,
-                "playback_affecting": True,
-                "expected_playing": True,
-                "queue_status_published": True,
-                "queue_status_source": QUEUE_STATUS_SOURCE,
-            },
-        ),
-        ("pause", None, True, None, None),
-        ("pause", None, False, True, {"playback_affecting": True, "expected_playing": False}),
-        (
-            "pause",
-            None,
-            False,
-            True,
-            {
-                "state_version": main.broker.version,
-                "published_state": True,
-                "state_refresh_ok": True,
-                "state_publish_forced": True,
-                "playback_affecting": True,
-                "expected_playing": False,
-                "queue_status_published": True,
-                "queue_status_source": QUEUE_STATUS_SOURCE,
-            },
-        ),
-    ]
+    assert len(status_pulses) == 12
+    for index in range(0, len(status_pulses), 3):
+        pending, accepted, confirmed = status_pulses[index : index + 3]
+        assert pending[2:4] == (True, None)
+        assert pending[4] == {"phase": "pending"}
+        assert accepted[2:4] == (True, None)
+        assert accepted[4]["phase"] == "accepted"
+        assert confirmed[2:4] == (False, True)
+        assert confirmed[4]["phase"] == "confirmed"
+        assert confirmed[4]["state_confirmed"] is True
 
 
 @pytest.mark.asyncio
@@ -1665,14 +1612,14 @@ async def test_mqtt_next_uses_active_playback_when_configured_target_is_only_ina
     assert refreshes == [main.settings.command_followup_refresh_delays_for("next")]
     assert result["published_state"] is True
     assert result["queue_status_published"] is True
-    assert status_pulses[0] == ("next", "knob-next-fallback", True, None, None, None)
+    assert status_pulses[0] == ("next", "knob-next-fallback", True, None, None, {"phase": "pending"})
     assert status_pulses[1] == (
         "next",
         "knob-next-fallback",
-        False,
         True,
         None,
-        {"playback_affecting": True, "expected_playing": True},
+        None,
+        {"phase": "accepted", "playback_affecting": True, "expected_playing": True},
     )
     assert status_pulses[-1][3] is True
     assert status_pulses[-1][5]["queue_status_published"] is True

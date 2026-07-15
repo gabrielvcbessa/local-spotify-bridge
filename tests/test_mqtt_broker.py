@@ -148,6 +148,53 @@ async def test_mqtt_config_skips_duplicate_payloads():
 
 
 @pytest.mark.anyio
+async def test_mqtt_command_coordinator_serializes_and_supersedes_waiting_volume_updates():
+    broker = ConnectionBroker(
+        Settings(
+            MQTT_ENABLED=True,
+            MQTT_KNOB_TOPIC_PREFIX="rotary",
+            MQTT_KNOB_DEVICE_ID="kitchen",
+            MQTT_QOS=1,
+        )
+    )
+    mqtt = FakeMqttClient()
+    broker._mqtt_client = mqtt
+    started = asyncio.Event()
+    release = asyncio.Event()
+    handled: list[str] = []
+
+    async def handler(command):
+        request_id = command["request_id"]
+        handled.append(request_id)
+        if request_id == "volume-1":
+            started.set()
+            await release.wait()
+        return {"phase": "confirmed", "state_confirmed": True}
+
+    broker.set_mqtt_command_handler(handler)
+    topic = broker.mqtt_topic("command")
+    first = asyncio.create_task(
+        broker._handle_mqtt_message(topic, json.dumps({"type": "volume_set", "request_id": "volume-1", "volume_percent": 10}))
+    )
+    await started.wait()
+    second = asyncio.create_task(
+        broker._handle_mqtt_message(topic, json.dumps({"type": "volume_set", "request_id": "volume-2", "volume_percent": 20}))
+    )
+    third = asyncio.create_task(
+        broker._handle_mqtt_message(topic, json.dumps({"type": "volume_set", "request_id": "volume-3", "volume_percent": 30}))
+    )
+    await asyncio.sleep(0)
+    release.set()
+    await asyncio.gather(first, second, third)
+
+    assert handled == ["volume-1", "volume-3"]
+    responses = [json.loads(payload) for published_topic, payload, _, _ in mqtt.published if published_topic.endswith("command_result")]
+    assert [response["request_id"] for response in responses] == ["volume-1", "volume-2", "volume-3"]
+    assert responses[1]["ignored"] is True
+    assert responses[1]["reason"] == "superseded_by_newer_volume"
+
+
+@pytest.mark.anyio
 async def test_mqtt_retained_publish_skips_duplicate_payloads_by_topic():
     broker = ConnectionBroker(
         Settings(
@@ -614,8 +661,16 @@ async def test_mqtt_command_publishes_non_retained_result():
         "queue_status_source": None,
         "device_refresh_ok": True,
         "published_devices": True,
-        "playback_affecting": None,
-        "ignored": None,
+            "playback_affecting": None,
+            "phase": None,
+            "state_confirmed": None,
+            "confirmation_reason": None,
+            "convergence_ms": None,
+            "observed_playing": None,
+            "observed_track_id": None,
+            "observed_track_uri": None,
+            "observed_device_id": None,
+            "ignored": None,
         "reason": None,
         "idempotent_replay": None,
         "received_at": result["received_at"],
@@ -720,8 +775,16 @@ async def test_mqtt_command_status_keeps_failed_command_context():
         "queue_status_source": None,
         "device_refresh_ok": None,
         "published_devices": None,
-        "playback_affecting": None,
-        "ignored": None,
+            "playback_affecting": None,
+            "phase": None,
+            "state_confirmed": None,
+            "confirmation_reason": None,
+            "convergence_ms": None,
+            "observed_playing": None,
+            "observed_track_id": None,
+            "observed_track_uri": None,
+            "observed_device_id": None,
+            "ignored": None,
         "reason": None,
         "idempotent_replay": None,
         "received_at": result["received_at"],

@@ -122,6 +122,8 @@ library_poller = PeriodicPoller(
 art_cache = ArtCache(settings)
 playlist_name_cache = PlaylistNameCache()
 cached_devices: list[dict[str, Any]] | None = None
+mqtt_art_publish_task: asyncio.Task[None] | None = None
+mqtt_art_publish_key: str | None = None
 LIBRARY_WRITE_COMMANDS = {"save_current_track", "unsave_current_track"}
 
 
@@ -2087,34 +2089,22 @@ async def delayed_refresh_and_publish(client: SpotifyClient, delay_seconds: floa
 async def mqtt_knob_snapshot(version: int, state, force_publish: bool = False) -> dict[str, Any]:
     art_options = mqtt_art_options()
     context_name = await resolved_context_name(spotify, state, resolve_inline=False)
-    art_hash = None
-    if state and state.album_art_url:
-        image_id = state.album_art_id or state.knob_art_version
-        if image_id:
-            try:
-                art_payload = await cached_rgb565_art(spotify, image_id, state.album_art_url, art_options)
-                art_hash = bytes_hash(art_payload)
-            except Exception as exc:
-                broker.mark_spotify_error(exc)
-
-    await prewarm_cached_track_art(spotify, state, art_options)
-    await publish_mqtt_art_payloads(spotify, state, art_options)
-    await publish_mqtt_status(force_publish=force_publish)
-    await broker.publish_mqtt_retained(
-        "control_state",
-        mqtt_control_state(version, state, context_name=context_name),
-        force=force_publish,
-    )
     snapshot = knob_snapshot(
         version=version,
         state=state,
         base_url=mqtt_base_url(),
         spotify_configured=spotify.spotify_configured,
         art_options=art_options,
-        art_hash=art_hash,
         context_name=context_name,
     )
     annotate_mqtt_art(snapshot, state, art_options)
+    await broker.publish_mqtt_retained(
+        "control_state",
+        mqtt_control_state(version, state, context_name=context_name),
+        force=force_publish,
+    )
+    await publish_mqtt_status(force_publish=force_publish)
+    schedule_mqtt_art_publish(spotify, state, art_options)
     return snapshot
 
 
@@ -2198,6 +2188,7 @@ def mqtt_status_payload(
             command_pulse["error"] = command_error
         if command_metadata:
             for key in (
+                "phase",
                 "ignored",
                 "reason",
                 "playback_affecting",
@@ -2210,6 +2201,13 @@ def mqtt_status_payload(
                 "device_refresh_ok",
                 "published_devices",
                 "track_saved",
+                "state_confirmed",
+                "confirmation_reason",
+                "convergence_ms",
+                "observed_playing",
+                "observed_track_id",
+                "observed_track_uri",
+                "observed_device_id",
             ):
                 if key in command_metadata:
                     command_pulse[key] = command_metadata[key]
@@ -2723,6 +2721,29 @@ async def publish_mqtt_art_payloads(client: SpotifyClient, state: PlaybackSnapsh
             broker.mark_spotify_error(exc)
 
 
+def mqtt_art_state_key(state: PlaybackSnapshot | None, art_options: ArtOptions) -> str:
+    if state is None:
+        return "none"
+    adjacent_ids = []
+    for track in (state.next_track, state.previous_track):
+        adjacent_ids.append(track.get("album_art_id") if isinstance(track, dict) else None)
+    return json.dumps(
+        [state.album_art_id or state.knob_art_version, *adjacent_ids, art_options.size, art_options.variant, art_options.swap],
+        separators=(",", ":"),
+    )
+
+
+def schedule_mqtt_art_publish(client: SpotifyClient, state: PlaybackSnapshot | None, art_options: ArtOptions) -> None:
+    global mqtt_art_publish_key, mqtt_art_publish_task
+    key = mqtt_art_state_key(state, art_options)
+    if key == mqtt_art_publish_key:
+        return
+    mqtt_art_publish_key = key
+    if mqtt_art_publish_task is not None and not mqtt_art_publish_task.done():
+        mqtt_art_publish_task.cancel()
+    mqtt_art_publish_task = asyncio.create_task(publish_mqtt_art_payloads(client, state, art_options))
+
+
 def annotate_mqtt_art(snapshot: dict[str, Any], state: PlaybackSnapshot | None, art_options: ArtOptions) -> None:
     if state is None:
         return
@@ -2797,6 +2818,150 @@ async def handle_mqtt_request(command: dict[str, Any]) -> dict[str, Any]:
     raise ValueError(f"Unsupported MQTT request type: {request_type}")
 
 
+def playback_identity(state: PlaybackSnapshot | None) -> str | None:
+    if state is None:
+        return None
+    return state.item_id or state.item_uri
+
+
+def command_state_convergence(
+    command_type: str,
+    command: dict[str, Any],
+    before: PlaybackSnapshot | None,
+    after: PlaybackSnapshot | None,
+    expected_playing: bool | None,
+) -> tuple[bool | None, str]:
+    if after is None:
+        return False, "no_active_playback"
+
+    if command_type in {"play", "pause", "play_pause"}:
+        if expected_playing is None:
+            return None, "playing_expectation_unavailable"
+        return after.is_playing == expected_playing, "playing_state_matches" if after.is_playing == expected_playing else "playing_state_mismatch"
+
+    if command_type == "next":
+        before_id = playback_identity(before)
+        after_id = playback_identity(after)
+        if before_id and after_id:
+            return before_id != after_id, "track_changed" if before_id != after_id else "track_unchanged"
+        return None, "track_identity_unavailable"
+
+    if command_type == "previous":
+        before_id = playback_identity(before)
+        after_id = playback_identity(after)
+        if before_id and after_id and before_id != after_id:
+            return True, "track_changed"
+        if before_id and after_id and before_id == after_id and before and before.progress_ms is not None and after.progress_ms is not None:
+            restarted = after.progress_ms + 1500 < before.progress_ms
+            return restarted, "track_restarted" if restarted else "track_unchanged"
+        return None, "track_identity_unavailable"
+
+    if command_type in {"select_source", "play_library_item"}:
+        expected_item = command.get("item_uri")
+        if not isinstance(expected_item, str):
+            offset = command.get("offset")
+            expected_item = offset.get("uri") if isinstance(offset, dict) else None
+        if isinstance(expected_item, str) and expected_item:
+            return after.item_uri == expected_item, "item_matches" if after.item_uri == expected_item else "item_mismatch"
+        expected_context = command.get("context_uri") or command.get("uri")
+        raw_context = after.raw.get("context") if isinstance(after.raw, dict) else None
+        observed_context = raw_context.get("uri") if isinstance(raw_context, dict) else None
+        if isinstance(expected_context, str) and expected_context and observed_context:
+            return observed_context == expected_context, "context_matches" if observed_context == expected_context else "context_mismatch"
+        return after.is_playing, "playback_started" if after.is_playing else "playback_not_started"
+
+    if command_type == "transfer":
+        expected_device = command.get("device_id")
+        device_matches = isinstance(expected_device, str) and after.device_id == expected_device
+        playing_matches = expected_playing is None or after.is_playing == expected_playing
+        confirmed = bool(device_matches and playing_matches)
+        return confirmed, "device_and_playing_match" if confirmed else "transfer_state_mismatch"
+
+    if command_type == "volume_set":
+        expected_volume = command.get("volume_percent")
+        if not isinstance(expected_volume, int) or after.device_volume_percent is None:
+            return None, "volume_observation_unavailable"
+        return after.device_volume_percent == expected_volume, "volume_matches" if after.device_volume_percent == expected_volume else "volume_mismatch"
+
+    if command_type == "seek":
+        expected_position = command.get("position_ms")
+        if not isinstance(expected_position, int) or after.progress_ms is None:
+            return None, "position_observation_unavailable"
+        confirmed = abs(after.progress_ms - expected_position) <= 5000
+        return confirmed, "position_matches" if confirmed else "position_mismatch"
+
+    if command_type == "shuffle_set":
+        expected_shuffle = command.get("enabled")
+        if not isinstance(expected_shuffle, bool) or after.shuffle_state is None:
+            return None, "shuffle_observation_unavailable"
+        return after.shuffle_state == expected_shuffle, "shuffle_matches" if after.shuffle_state == expected_shuffle else "shuffle_mismatch"
+
+    if command_type == "repeat_set":
+        expected_repeat = command.get("mode")
+        if not isinstance(expected_repeat, str) or after.repeat_state is None:
+            return None, "repeat_observation_unavailable"
+        return after.repeat_state == expected_repeat, "repeat_matches" if after.repeat_state == expected_repeat else "repeat_mismatch"
+
+    if command_type in {"save_current_track", "unsave_current_track"}:
+        if after.item_saved is None:
+            return None, "saved_state_observation_unavailable"
+        expected_saved = command_type == "save_current_track"
+        return after.item_saved == expected_saved, "saved_state_matches" if after.item_saved == expected_saved else "saved_state_mismatch"
+
+    return None, "no_specific_convergence_rule"
+
+
+async def refresh_until_command_converged(
+    client: SpotifyClient,
+    *,
+    command_type: str,
+    command: dict[str, Any],
+    before: PlaybackSnapshot | None,
+    expected_playing: bool | None,
+    follow_up_delays: tuple[float, ...],
+) -> dict[str, Any]:
+    started_at = asyncio.get_running_loop().time()
+    published_state = False
+    confirmed: bool | None = None
+    confirmation_reason = "state_not_refreshed"
+    checkpoints = (0.0, *follow_up_delays)
+    for checkpoint in checkpoints:
+        elapsed = asyncio.get_running_loop().time() - started_at
+        if checkpoint > elapsed:
+            await asyncio.sleep(checkpoint - elapsed)
+        published = await refresh_after_successful_command(client)
+        published_state = published_state or published
+        confirmed, confirmation_reason = command_state_convergence(
+            command_type,
+            command,
+            before,
+            broker.current_state,
+            expected_playing,
+        )
+        if confirmed is True:
+            break
+        if confirmed is None and published:
+            confirmed = True
+            confirmation_reason = f"{confirmation_reason}:authoritative_refresh"
+            break
+
+    after = broker.current_state
+    state_confirmed = bool(confirmed and published_state)
+    return {
+        "state_version": broker.version,
+        "published_state": published_state,
+        "state_refresh_ok": published_state,
+        "state_publish_forced": True,
+        "state_confirmed": state_confirmed,
+        "confirmation_reason": confirmation_reason,
+        "convergence_ms": round((asyncio.get_running_loop().time() - started_at) * 1000, 3),
+        "observed_playing": after.is_playing if after is not None else None,
+        "observed_track_id": after.item_id if after is not None else None,
+        "observed_track_uri": after.item_uri if after is not None else None,
+        "observed_device_id": after.device_id if after is not None else None,
+    }
+
+
 async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
     command_type = command.get("type")
     if not isinstance(command_type, str):
@@ -2805,9 +2970,15 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(request_id, str):
         request_id = None
     command_policy = mqtt_command_policy(command_type)
-    currently_playing = broker.current_state.is_playing if broker.current_state is not None else None
+    before_state = broker.current_state.model_copy(deep=True) if broker.current_state is not None else None
+    currently_playing = before_state.is_playing if before_state is not None else None
     expected_playing = expected_playing_for_command(command_type, command, currently_playing=currently_playing)
-    await publish_mqtt_status(command_type=command_type, command_request_id=request_id, command_pending=True)
+    await publish_mqtt_status(
+        command_type=command_type,
+        command_request_id=request_id,
+        command_pending=True,
+        command_metadata={"phase": "pending"},
+    )
     try:
         if command_type == "play_pause":
             device_id = await verified_live_control_device_id(spotify, command.get("device_id"), command_type=command_type)
@@ -2833,19 +3004,24 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
                 raise ValueError("volume_percent must be between 0 and 100.")
             if broker.current_state and not broker.current_state.volume_control_supported:
                 result = {
+                    "ok": False,
+                    "phase": "failed",
                     "ignored": True,
                     "reason": "volume_control_unsupported",
                     "state_version": broker.version,
                     "published_state": False,
                     "state_refresh_ok": None,
                     "state_publish_forced": False,
+                    "state_confirmed": False,
+                    "confirmation_reason": "volume_control_unsupported",
                     "playback_affecting": command_policy.playback_affecting,
                 }
                 await publish_mqtt_status(
                     command_type=command_type,
                     command_request_id=request_id,
                     command_pending=False,
-                    command_ok=True,
+                    command_ok=False,
+                    command_error="volume control unsupported",
                     command_metadata=result,
                 )
                 return result
@@ -2903,34 +3079,40 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
         else:
             raise ValueError(f"Unsupported MQTT command type: {command_type}")
 
-        command_metadata: dict[str, Any] = {"playback_affecting": command_policy.playback_affecting}
+        command_metadata: dict[str, Any] = {
+            "phase": "accepted",
+            "playback_affecting": command_policy.playback_affecting,
+        }
         if expected_playing is not None:
             command_metadata["expected_playing"] = expected_playing
         await publish_mqtt_status(
             command_type=command_type,
             command_request_id=request_id,
-            command_pending=False,
-            command_ok=True,
+            command_pending=True,
             command_metadata=command_metadata,
         )
         device_refresh_ok: bool | None = None
         if command_policy.refresh_devices:
             device_refresh_ok = await refresh_devices_after_successful_command(spotify)
-        published_state = await refresh_after_successful_command(
+        result = await refresh_until_command_converged(
             spotify,
-            follow_up_delays=settings.command_followup_refresh_delays_for(command_type) if command_policy.follow_up_refresh else (),
+            command_type=command_type,
+            command=command,
+            before=before_state,
+            expected_playing=expected_playing,
+            follow_up_delays=(
+                settings.command_followup_refresh_delays_for(command_type)
+                if command_policy.follow_up_refresh
+                else ()
+            ),
         )
-        result = {
-            "state_version": broker.version,
-            "published_state": published_state,
-            "state_refresh_ok": published_state,
-            "state_publish_forced": True,
-            "playback_affecting": command_policy.playback_affecting,
-        }
+        result["phase"] = "confirmed" if result["state_confirmed"] else "failed"
+        result["ok"] = result["state_confirmed"]
+        result["playback_affecting"] = command_policy.playback_affecting
         if expected_playing is not None:
             result["expected_playing"] = expected_playing
         if command_policy.playback_affecting:
-            result["queue_status_published"] = published_state
+            result["queue_status_published"] = result["published_state"]
             result["queue_status_source"] = "retained_state_adjacent_tracks"
         if command_type == "save_current_track":
             result["track_saved"] = True
@@ -2939,11 +3121,16 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
         if device_refresh_ok is not None:
             result["device_refresh_ok"] = device_refresh_ok
             result["published_devices"] = device_refresh_ok
+        command_error = None
+        if not result["state_confirmed"]:
+            command_error = f"command state did not converge: {result['confirmation_reason']}"
+            result["error"] = command_error
         await publish_mqtt_status(
             command_type=command_type,
             command_request_id=request_id,
             command_pending=False,
-            command_ok=True,
+            command_ok=result["state_confirmed"],
+            command_error=command_error,
             command_metadata=result,
         )
         return result
@@ -2954,6 +3141,7 @@ async def handle_mqtt_command(command: dict[str, Any]) -> dict[str, Any]:
             command_pending=False,
             command_ok=False,
             command_error=str(exc),
+            command_metadata={"phase": "failed", "state_confirmed": False},
         )
         raise
 
