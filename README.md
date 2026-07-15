@@ -652,6 +652,10 @@ The retained `status` message and `/health` also expose a dynamic `direct_spotif
 intentionally token-free: clients can read `paired`, `pairing_supported`, `token_source`,
 `credential_owner`, `setup_path`, and `disconnect_path`, while `token_secret_exposed=false` confirms
 that refresh-token material is never published over MQTT or diagnostics.
+If Spotify rejects a Like/Unlike library-write command with a `403` from `/v1/me/tracks`,
+`direct_spotify.scope_issue` is populated and `user-library-modify` is listed in
+`missing_required_scopes` so constrained clients can ask the user to open `/v1/auth/login` and grant
+library access again.
 
 The `devices.readiness_contract` capability documents the target safety vocabulary clients should
 expect in retained `status.target_readiness`: `safe_for_live_control` means the target resolves and

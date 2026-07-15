@@ -122,6 +122,7 @@ library_poller = PeriodicPoller(
 art_cache = ArtCache(settings)
 playlist_name_cache = PlaylistNameCache()
 cached_devices: list[dict[str, Any]] | None = None
+LIBRARY_WRITE_COMMANDS = {"save_current_track", "unsave_current_track"}
 
 
 @asynccontextmanager
@@ -187,11 +188,38 @@ async def spotify_auth_not_configured_handler(_, exc: SpotifyAuthNotConfigured):
     return JSONResponse(status_code=503, content={"detail": str(exc)})
 
 
+def spotify_library_write_scope_issue(command_result: dict[str, Any] | None) -> dict[str, str] | None:
+    if not isinstance(command_result, dict) or command_result.get("ok") is not False:
+        return None
+    if command_result.get("command") not in LIBRARY_WRITE_COMMANDS:
+        return None
+    error = str(command_result.get("error") or "")
+    envelope = command_result.get("error_envelope") if isinstance(command_result.get("error_envelope"), dict) else {}
+    message = str(envelope.get("message") or error)
+    combined = f"{error}\n{message}"
+    if "403" not in combined and "Forbidden" not in combined:
+        return None
+    if "/v1/me/tracks" not in combined:
+        return None
+    return {
+        "code": "spotify_library_write_forbidden",
+        "title": "Spotify library access denied",
+        "detail": "Spotify rejected the Like/Unlike library-write request.",
+        "recovery_action": "Open /v1/auth/login and grant library access again.",
+    }
+
+
 def direct_spotify_status(client: SpotifyClient | None = None) -> dict[str, Any]:
     client = client or spotify
     token_source = getattr(client, "refresh_token_source", "none")
     requested_scopes = settings.spotify_scope_list
     required_feature_scopes = list(REQUIRED_SPOTIFY_FEATURE_SCOPES)
+    missing_required_scopes = [
+        scope for scope in required_feature_scopes if scope not in requested_scopes
+    ]
+    scope_issue = spotify_library_write_scope_issue(broker.last_mqtt_command_result)
+    if scope_issue is not None and "user-library-modify" not in missing_required_scopes:
+        missing_required_scopes.append("user-library-modify")
     return {
         "transport": "spotify_web_api",
         "pairing_supported": settings.spotify_auth_configured,
@@ -200,9 +228,8 @@ def direct_spotify_status(client: SpotifyClient | None = None) -> dict[str, Any]
         "token_present": token_source != "none",
         "requested_scopes": requested_scopes,
         "required_feature_scopes": required_feature_scopes,
-        "missing_required_scopes": [
-            scope for scope in required_feature_scopes if scope not in requested_scopes
-        ],
+        "missing_required_scopes": missing_required_scopes,
+        "scope_issue": scope_issue,
         "credential_owner": "local_bridge",
         "runtime_token_store": True,
         "token_secret_exposed": False,

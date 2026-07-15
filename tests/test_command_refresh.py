@@ -1354,7 +1354,32 @@ def test_mqtt_status_payload_uses_cached_target_readiness(monkeypatch):
     assert payload["direct_spotify"]["credential_owner"] == "local_bridge"
     assert payload["direct_spotify"]["token_secret_exposed"] is False
     assert payload["direct_spotify"]["missing_required_scopes"] == []
+    assert payload["direct_spotify"]["scope_issue"] is None
     assert "refresh_token" not in payload["direct_spotify"]
+
+
+def test_mqtt_status_payload_surfaces_library_write_scope_recovery():
+    previous_result = main.broker.last_mqtt_command_result
+    main.broker.last_mqtt_command_result = {
+        "ok": False,
+        "command": "unsave_current_track",
+        "request_id": "unlike-1",
+        "error": "Client error '403 Forbidden' for url 'https://api.spotify.com/v1/me/tracks?ids=track-1'",
+        "error_envelope": {
+            "type": "HTTPStatusError",
+            "message": "Client error '403 Forbidden' for url 'https://api.spotify.com/v1/me/tracks?ids=track-1'",
+            "source": "mqtt_command",
+        },
+    }
+    try:
+        payload = main.mqtt_status_payload()
+    finally:
+        main.broker.last_mqtt_command_result = previous_result
+
+    direct = payload["direct_spotify"]
+    assert direct["missing_required_scopes"] == ["user-library-modify"]
+    assert direct["scope_issue"]["code"] == "spotify_library_write_forbidden"
+    assert direct["scope_issue"]["recovery_action"] == "Open /v1/auth/login and grant library access again."
 
 
 def test_mqtt_status_payload_uses_active_playback_when_configured_target_is_stale(monkeypatch):
