@@ -215,7 +215,9 @@ MQTT listener activity has arrived, but it never makes a slower poller faster; p
 the playlist interval if it is larger. Listener activity includes retained availability heartbeats,
 non-retained commands, and non-retained requests. An `availability` payload with `online:false`
 marks the MQTT listener inactive until a fresh command, request, or online heartbeat arrives. Devices
-and the full playlist index publish MQTT retained updates only when their semantic payload changes.
+and the sorted playlist index publish MQTT retained updates only when their semantic payload changes.
+The retained playlist index is a bounded first window; controllers can request subsequent globally
+sorted windows without receiving the full index in one latency-heavy MQTT packet.
 Spotify `429 Retry-After` cooldowns are tracked by endpoint group, so a playlist cooldown does not
 block `/me/player` now-playing refreshes.
 
@@ -764,7 +766,7 @@ MQTT request examples for non-playback data:
 
 ```json
 { "request_id": "knob-1", "type": "library_root" }
-{ "request_id": "knob-1b", "type": "library_playlists" }
+{ "request_id": "knob-1b", "type": "library_playlists", "offset": 0, "limit": 6 }
 { "request_id": "knob-2", "type": "library_page", "kind": "playlists", "page": 0, "offset": 0, "limit": 3 }
 { "request_id": "knob-3", "type": "library_page", "kind": "playlist_tracks", "parent_uri": "spotify:playlist:...", "offset": 0, "limit": 3 }
 { "request_id": "knob-4", "type": "devices", "offset": 0, "limit": 3 }
@@ -774,6 +776,10 @@ MQTT request examples for non-playback data:
 The bridge publishes request payloads to retained library/device topics and answers on
 `request_result`. Retained payloads include `version`, `hash`, and `updated_at_ms`, so the knob can
 skip redraws when content has not changed.
+
+`library_playlists` applies `offset` and `limit` after the bridge has fetched and globally sorted the
+playlist index, preserving stable order between windows. Omitting `limit` retains the legacy full
+index response for older clients; advertised clients should honor `library_playlists_window_limit`.
 
 REST mirrors for debugging:
 

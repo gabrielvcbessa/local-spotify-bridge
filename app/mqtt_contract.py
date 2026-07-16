@@ -217,6 +217,7 @@ def mqtt_knob_config_payload(
         "limits": {
             "knob_visible_rows": 3,
             "library_page_limit": 3,
+            "library_playlists_window_limit": 10,
             "max_title_chars": 64,
             "max_subtitle_chars": 64,
         },

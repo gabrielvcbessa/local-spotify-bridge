@@ -421,6 +421,23 @@ async def test_full_playlists_payload_can_sort_alphabetically(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_full_playlists_payload_windows_after_global_sort(monkeypatch):
+    client = FakeDevicesClient()
+    previous_sort = main.settings.spotify_playlist_sort
+    monkeypatch.setattr(main.settings, "spotify_playlist_sort", "alpha")
+
+    payload = await main.build_full_playlists_payload(client, offset=1, limit=1)
+
+    monkeypatch.setattr(main.settings, "spotify_playlist_sort", previous_sort)
+    assert payload["offset"] == 1
+    assert payload["limit"] == 1
+    assert payload["total"] == 3
+    assert payload["next_offset"] == 2
+    assert payload["items"][0]["slot"] == 1
+    assert payload["items"][0]["title"] == "Beta"
+
+
+@pytest.mark.asyncio
 async def test_mqtt_next_previous_do_not_use_implicit_target_device(monkeypatch):
     client = FakeCommandSpotifyClient()
     refreshes = []

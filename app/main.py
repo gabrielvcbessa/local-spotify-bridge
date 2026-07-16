@@ -2268,7 +2268,7 @@ async def refresh_devices_and_publish(client: SpotifyClient) -> dict[str, Any]:
 async def refresh_library_and_publish(client: SpotifyClient) -> None:
     root_payload = await build_library_root_payload(client)
     await broker.publish_mqtt_retained("library/root", root_payload)
-    playlists_payload = await build_full_playlists_payload(client)
+    playlists_payload = await build_full_playlists_payload(client, offset=0, limit=6)
     await broker.publish_mqtt_retained("library/playlists", playlists_payload)
     page_payload = await build_library_page_payload(
         client,
@@ -2531,15 +2531,27 @@ def sort_playlist_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return items
 
 
-async def build_full_playlists_payload(client: SpotifyClient, request_id: str | None = None) -> dict[str, Any]:
+async def build_full_playlists_payload(
+    client: SpotifyClient,
+    request_id: str | None = None,
+    *,
+    offset: int = 0,
+    limit: int | None = None,
+) -> dict[str, Any]:
     compact = compact_playlists(await fetch_all_playlists(client))
+    offset = max(0, offset)
+    end = None if limit is None else offset + max(1, limit)
+    window = compact.items[offset:end]
     payload = {
         "request_id": request_id,
         "kind": "playlists",
         "title": "Playlists",
         "sort_order": settings.spotify_playlist_sort,
         "total": compact.total,
-        "items": [library_item_payload(item, slot) for slot, item in enumerate(compact.items)],
+        "offset": offset,
+        "limit": len(window),
+        "next_offset": offset + len(window) if offset + len(window) < compact.total else None,
+        "items": [library_item_payload(item, offset + slot) for slot, item in enumerate(window)],
     }
     return envelope(version=broker.version, payload=payload, hash_payload={k: v for k, v in payload.items() if k != "request_id"})
 
@@ -2799,7 +2811,11 @@ async def handle_mqtt_request(command: dict[str, Any]) -> dict[str, Any]:
         return {"published_topic": broker.mqtt_topic("library/page"), "published_version": payload["version"]}
 
     if request_type == "library_playlists":
-        payload = await build_full_playlists_payload(spotify, request_id=request_id)
+        requested_limit = command.get("limit")
+        window_limit = min(10, max(1, int(requested_limit))) if requested_limit is not None else None
+        payload = await build_full_playlists_payload(
+            spotify, request_id=request_id, offset=offset, limit=window_limit
+        )
         await broker.publish_mqtt_retained("library/playlists", payload)
         return {"published_topic": broker.mqtt_topic("library/playlists"), "published_version": payload["version"]}
 
