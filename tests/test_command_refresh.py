@@ -352,6 +352,26 @@ async def test_mqtt_devices_request_publishes_advertised_devices_library_page(mo
 
 
 @pytest.mark.asyncio
+async def test_mqtt_refresh_request_forces_observable_retained_state(monkeypatch):
+    refreshes = []
+
+    async def fake_refresh_and_publish(_client, *, follow_up_delays=(), force_publish=False):
+        refreshes.append((tuple(follow_up_delays), force_publish))
+        return True
+
+    async def fake_publish_mqtt_status(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(main, "refresh_and_publish", fake_refresh_and_publish)
+    monkeypatch.setattr(main, "publish_mqtt_status", fake_publish_mqtt_status)
+
+    result = await main.handle_mqtt_request({"request_id": "refresh-1", "type": "refresh"})
+
+    assert refreshes == [((), True)]
+    assert result == {"state_version": main.broker.version}
+
+
+@pytest.mark.asyncio
 async def test_recent_tracks_library_page_uses_recent_window():
     client = FakeDevicesClient()
 

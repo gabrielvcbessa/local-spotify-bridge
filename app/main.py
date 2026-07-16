@@ -2811,7 +2811,7 @@ async def handle_mqtt_request(command: dict[str, Any]) -> dict[str, Any]:
         return {"published_topic": broker.mqtt_topic("devices"), "published_version": payload["version"]}
 
     if request_type == "refresh":
-        await refresh_and_publish(spotify)
+        await refresh_and_publish(spotify, force_publish=True)
         await publish_mqtt_status()
         return {"state_version": broker.version}
 
